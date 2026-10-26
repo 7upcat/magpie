@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"sync"
 	"time"
@@ -58,6 +59,10 @@ func v4Fallback(t *http.Transport) {
 		dial = (&net.Dialer{}).DialContext
 	}
 	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, _, _ := net.SplitHostPort(addr)
+		if _, err := netip.ParseAddr(host); err == nil {
+			return dial(ctx, network, addr)
+		}
 		if network == "tcp" && !v4Since(addr).IsZero() {
 			network = "tcp4"
 		}

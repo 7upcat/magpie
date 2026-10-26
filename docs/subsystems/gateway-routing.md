@@ -24,6 +24,11 @@ backfilled; see [Gateway Session Aggregation](gateway-sessions.md).
 
 ## Responsibilities and sources of truth
 
+The upstream transport's [IPv4 fallback](../../internal/netproxy/v4fallback.go)
+remembers a hostname whose IPv6 connection closed before a reply for 30 minutes.
+IP literals keep their specified address family: an early close on an IPv6
+literal must not make later requests dial that literal through `tcp4`.
+
 | Part | Responsibility | Source |
 | --- | --- | --- |
 | Address and caller | `DefaultAddr`. The local token `magpie` and the per-agent `magpie-<agent>` (`TokenFor`). `agentOf` tells which agent asked, first by token, then by User-Agent. A Codex turn that names itself Claude Code is Codex's: OpenAI's Codex plugin for Claude Code (/codex:rescue, /codex:review) runs `codex app-server` with clientInfo "Claude Code", which Codex sends as its originator and User-Agent, and only Codex's turn headers (`x-codex-window-id`, `x-codex-turn-metadata`) tell it apart from Claude Code's own requests (`codexForClaudeCode`); an app that runs Codex as its own engine under its own name (Lody) stays that app. Claude Science, whose User-Agent is the Anthropic SDK's, is told by its client's `X-Anthropic-Surface: operon` (`isClaudeScience`). It is listed every model as `claude-magpie-<number>` (`scienceModels`; its picker keeps only a `claude-` id whose name isn't a lower-case slug), and a Claude id magpie doesn't serve (its default before a pick, its haiku side tasks) goes to the model its last turn with tools was on, else the first it is listed (`scienceTurn`, kept in `claude-science.model`). | [`gateway.go`](../../internal/gateway/gateway.go) |
