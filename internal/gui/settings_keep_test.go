@@ -195,6 +195,7 @@ func TestSettingsSaveKeepsWhatItDoesNotSend(t *testing.T) {
 	was.DesktopSubagentEffort = "high"
 	was.CodexAsyncCompact, was.CodexAsyncCompactPercent = true, 70
 	was.ClaudeRunsMost = 3
+	was.SearchAll = true
 	was.RequestArchiveLocal, was.RequestArchiveLocalMB = true, 256
 	was.ProxyCustom = "http://me:secret@proxy.example:8080"
 	was.PanelShortcut = "Ctrl+Alt+K"
