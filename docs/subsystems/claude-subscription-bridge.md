@@ -378,6 +378,18 @@ history to the 1h cache at 2×.
    (`currentTurnOpen`, #1751). Told nothing, the model said a text-only
    turn had an image attached and offered to open the path.
 
+When the latest assistant message was added locally by the client (Claude
+Code adds `No response requested.` with model `<synthetic>` on native
+resume), it is not a reply the upstream run returned. The Messages request
+keeps only its role and content, so selection skips only that known notice
+as a reply boundary and matches the complete history prefix held by a
+waiting run or saved session (`waitingPrefix`), with the account, model,
+settings and full tool definitions unchanged.
+Everything after that prefix, including the local assistant message, is
+sent as the increment. Results owed to calls before the prefix cannot be
+replayed through this path. A resume with changed tool schemas still
+starts a new run.
+
 A Claude Code that ends before it answers a control request
 (`cliControl`: `initialize`, the safety context) is reported with its
 exit status and the end of its stderr (`endedBefore`), as one that ends
@@ -949,6 +961,7 @@ and the next turn starts a run in the new one, as after any restart.
 ## Verification
 
 ```sh
+go test -tags nogui ./internal/gateway/ -run 'TestClaudeSyntheticResume|TestClaudeResumePrefix' -count=1
 go test -tags nogui ./internal/gateway/ -run '^TestClaudeClientCache' -count=1
 go test -tags nogui ./internal/gateway/ -run '^TestClaudeLeanPrompt' -count=1
 go test -tags nogui ./internal/gateway/ -run '^TestClaudeTUIChosen$' -count=1

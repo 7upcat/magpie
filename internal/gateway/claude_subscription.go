@@ -1247,6 +1247,11 @@ func (b *subscriptionBridge) resume(req *Request, owner string) (*subscriptionRu
 		}
 	}
 	if run == nil {
+		if k, messages := b.waitingPrefix(req, owner); k != "" {
+			key, since, run = k, messages, b.idle[k]
+		}
+	}
+	if run == nil {
 		// the client sent the conversation back rewritten (#912): the
 		// run is its own when nothing else could be, and its agent was
 		// told every tool the client offers now
@@ -1362,18 +1367,51 @@ func nextTurn(req *Request, owner string) (string, []Message) {
 		return "", nil
 	}
 	since := msgs[j+1:]
+	if !selfContainedCalls(since) {
+		return "", nil
+	}
+	return turnKey(owner, req, msgs[:j+1]), since
+}
+
+// selfContainedCalls says no result in msgs answers a call before msgs.
+func selfContainedCalls(msgs []Message) bool {
 	calls := map[string]bool{}
-	for _, m := range since {
+	for _, m := range msgs {
 		for _, p := range m.Parts {
 			switch {
 			case p.Kind == ToolCall:
 				calls[p.ID] = true
 			case p.Kind == ToolResult && !calls[p.CallID]:
-				return "", nil
+				return false
 			}
 		}
 	}
-	return turnKey(owner, req, msgs[:j+1]), since
+	return true
+}
+
+// waitingPrefix finds a run before Claude Code's local resume replies
+// (b.mu held). Messages carries their role/content, not the transcript's
+// <synthetic> model, so only the known resume notice is skipped as a
+// boundary. Its words remain in the increment sent to the run.
+func (b *subscriptionBridge) waitingPrefix(req *Request, owner string) (string, []Message) {
+	msgs := req.Messages
+	j := len(msgs) - 1
+	for j >= 0 && (msgs[j].Role != "assistant" || callsTool(msgs[j]) || localResumeReply(msgs[j])) {
+		j--
+	}
+	if j < 0 || j == len(msgs)-1 {
+		return "", nil
+	}
+	key := turnKey(owner, req, msgs[:j+1])
+	since := msgs[j+1:]
+	if (b.idle[key] != nil || b.shelf[key] != nil) && selfContainedCalls(since) {
+		return key, since
+	}
+	return "", nil
+}
+
+func localResumeReply(m Message) bool {
+	return m.Role == "assistant" && len(m.Parts) == 1 && m.Parts[0].Kind == Text && m.Parts[0].Text == "No response requested."
 }
 
 // looseTurn is a conversation a run waits at, as a client may send it
@@ -1792,6 +1830,11 @@ func (b *subscriptionBridge) unshelve(req *Request, owner string) *savedSession 
 	}
 	b.mu.Lock()
 	s := b.shelf[key]
+	if s == nil {
+		if k, messages := b.waitingPrefix(req, owner); k != "" {
+			key, since, s = k, messages, b.shelf[k]
+		}
+	}
 	if s == nil {
 		// rewritten (resume); its Claude Code is told the tools the
 		// client offers now, and the session keeps the calls made of
