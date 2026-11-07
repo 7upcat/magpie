@@ -9,8 +9,50 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
+
+func TestIPv6LiteralRecoversAfterEarlyClose(t *testing.T) {
+	listener, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skip("no ::1:", err)
+	}
+	var calls atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			conn.Close()
+			return
+		}
+		io.WriteString(w, "healthy")
+	}))
+	srv.Listener.Close()
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+	t.Cleanup(func() { v4Only.Lock(); v4Only.at = nil; v4Only.Unlock() })
+	base := &http.Transport{}
+	defer base.CloseIdleConnections()
+	c := &http.Client{Transport: Dispatch(base)}
+	if res, err := c.Get(srv.URL); err == nil {
+		res.Body.Close()
+		t.Fatal("first request should fail when the peer closes without a reply")
+	}
+	res, err := c.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("IPv6 literal must remain reachable after an early close: %v", err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil || res.StatusCode != http.StatusOK || string(body) != "healthy" {
+		t.Fatalf("recovery response: status=%d body=%q err=%v", res.StatusCode, body, err)
+	}
+}
 
 // A host whose IPv6 address takes the connection and closes it at once
 // (a TUN that can't carry IPv6) is reached over IPv4, the first request
