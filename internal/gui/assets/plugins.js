@@ -1320,6 +1320,8 @@
       r.append(val);
       return r;
     }
+    const flip = e.tools?.length && !e.off && toolsFlip(e);
+    if (flip) val.append(flip);
     if ((e.isGateway || (mw && !mw.error) || ownOpts) && !e.off && editing?.pkg !== pkg) {
       const o = el("button", "text", t("Options"));
       o.title = e.options ? t("The options it runs with") : t("It runs with no options; its package suggests some");
@@ -1479,21 +1481,25 @@
     const b = copyBtn(url, t("MCP server address"));
     b.title = t("Copy the MCP server's address ({url}): add it to an agent as an MCP server (Streamable HTTP)", { url });
     d.append(b);
-    if (sv && !gatewayMode && !featuresOff.has("library")) {
-      const f = el("button", "link pm-tools-flip", t(sv.on ? "Hide from agents" : "Give to agents"));
-      f.onclick = (ev) => {
-        ev.stopPropagation();
-        f.disabled = true;
-        api("library/servers/plugin-on", { name: sv.plugin, on: !sv.on }).then(refresh, (err) => { f.disabled = false; statusErr(err); });
-      };
-      d.append(f);
-    }
     return d;
+  }
+  // toolsFlip gives a plugin's tools to every agent or hides them, among
+  // the row's buttons (on the tools line it sat a line below them)
+  function toolsFlip(e) {
+    const sv = e.toolsServer;
+    if (!sv || gatewayMode || featuresOff.has("library")) return null;
+    const f = el("button", "text pm-tools-flip", t(sv.on ? "Hide from agents" : "Give to agents"));
+    f.onclick = (ev) => {
+      ev.stopPropagation();
+      f.disabled = true;
+      api("library/servers/plugin-on", { name: sv.plugin, on: !sv.on }).then(refresh, (err) => { f.disabled = false; statusErr(err); });
+    };
+    return f;
   }
 
   // what a plugin's page may read of magpie's: what its package.json's
   // magpie.permissions declares, each a read with no secret in it
-  const READS = { "usage:summary": "your usage totals, by model", "providers:list": "your providers' names" };
+  const READS = { "usage:summary": "your usage totals, by model", "usage:day": "your usage by day, agent and model", "providers:list": "your providers' names" };
   const PAGES = { sessions: "Sessions", library: "Library", routing: "Routing", usage: "Usage" };
   function pageLine(p) {
     const d = el("div", "sub pm-mw pm-page");
@@ -1760,9 +1766,12 @@
     const bar = el("div", "bar");
     bar.append(el("span", "note", t("Plugins are other people's code: they sign in and make the requests, or see them as middleware.")), el("span", "grow"));
     const close = el("button", "text", t("Close"));
-    close.onclick = () => { stop(); closeModal(); };
+    close.onclick = () => { stop(); closeConfirmAsk(); };
     bar.append(close);
     ed.append(bar);
+    // Escape and the backdrop close it, as every dialog borrowing #modal
+    // outside Providers (#3779)
+    confirmAsk = ed;
     openModal(ed);
     // the button follows an install or a sign-in made while it's open
     const tick = setInterval(() => { if (!ed.isConnected) return stop(); redrawAct(); }, 600);
@@ -1785,8 +1794,8 @@
         wait.leave();
       }
       holdModal();
-      d.animate([{ height: h + "px", top: y, overflow: "hidden" }, { height: d.offsetHeight + "px", top: d.style.top, overflow: "hidden" }], { duration: 570, easing: SPRING });
-      n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: "ease-out" });
+      d.animate([{ height: h + "px", top: y, overflow: "hidden" }, { height: d.offsetHeight + "px", top: d.style.top, overflow: "hidden" }], { duration: 460, easing: SPRING });
+      n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: "ease-out" });
     };
     try {
       const p = await api("plugins/page?name=" + encodeURIComponent(l.package));

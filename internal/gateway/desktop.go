@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/desktopdir"
 	"github.com/yetone/magpie/internal/lastgood"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
 )
@@ -34,8 +34,8 @@ import (
 // Anthropic model") and on the model a session is started with, so
 // anthropic/deepseek/deepseek-flash is turned away for its "deepseek".
 var (
-	desktopDenied = regexp.MustCompile(`ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|lfm|\bling\b|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|qianfan|qwen|tc-code|\bunic\b|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|amazon\.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|\bk2\.|\bm2\.|jamba|arctic|solar|mercury|zamba|kat-coder|\bds-|dpsk`)
-	desktopTier   = regexp.MustCompile(`^(sonnet|opus|haiku|fable|mythos)(-[\d.]+)?$`)
+	desktopDenied = lazyre.New(`ark-code|astron|command-r|deepseek|doubao|gemini|gemma|glm|gpt|grok|hermes|hy3|kimi|lfm|\bling\b|llama|longcat|mimo|minimax|mistral|mixtral|moonshot|nemotron|openai|phi-|qianfan|qwen|tc-code|\bunic\b|yi-|stepfun|step-3|seed-|bytedance|hunyuan|granite|amazon\.nova|nova-|devstral|ministral|ernie|codex|arcee|trinity|abab|phi\d|\bk2\.|\bm2\.|jamba|arctic|solar|mercury|zamba|kat-coder|\bds-|dpsk`)
+	desktopTier   = lazyre.New(`^(sonnet|opus|haiku|fable|mythos)(-[\d.]+)?$`)
 	desktopWords  = []string{"claude", "sonnet", "opus", "haiku", "fable", "mythos", "anthropic"}
 )
 
@@ -70,7 +70,7 @@ func desktopAccepts(id string) bool {
 // request that names no build at all, as the Code tab's Claude Code
 // ("claude-cli/… (external, claude-desktop)", known by its key) whose
 // ids are mythos-magpie-<n> already.
-var desktopUAVersion = regexp.MustCompile(` Claude/(\d+)`)
+var desktopUAVersion = lazyre.New(` Claude/(\d+)`)
 
 func desktopKnowsMythos(ua string) bool {
 	m := desktopUAVersion.FindStringSubmatch(ua)
@@ -123,8 +123,8 @@ const (
 // desktopClaude is a model id that is Anthropic's own Claude model, as tIt
 // knows it: claude-<tier>-<version>, a date taken off.
 var (
-	desktopClaude = regexp.MustCompile(`^claude-(?:opus|sonnet|haiku|fable|mythos)-\d+(?:-\d+)?$`)
-	desktopDated  = regexp.MustCompile(`-\d{8}$`)
+	desktopClaude = lazyre.New(`^claude-(?:opus|sonnet|haiku|fable|mythos)-\d+(?:-\d+)?$`)
+	desktopDated  = lazyre.New(`-\d{8}$`)
 )
 
 func aliasNumber(id string) string {
@@ -828,11 +828,17 @@ func desktopDefault(asked string) string {
 }
 
 // desktopSelectorRoots are the Claude-3p folders Desktop keeps its model
-// menus' choices in (desktopChosen): every set desktopdir finds. A test
-// sets its own.
+// menus' choices in (desktopChosen): every set desktopdir finds, and the
+// isolated Desktop's folder (#5671) when it is there (the newest choice
+// counts). A test sets its own.
 var desktopSelectorRoots = func() []string {
 	home, _ := os.UserHomeDir()
 	var out []string
+	if iso := desktopdir.Isolated(desktopdir.OS, home); iso != "" {
+		if fi, err := os.Stat(iso); err == nil && fi.IsDir() {
+			out = append(out, iso)
+		}
+	}
 	for _, d := range desktopdir.Sets(desktopdir.OS, home, appdir.Getenv) {
 		if d.ThreeP != "" {
 			out = append(out, d.ThreeP)

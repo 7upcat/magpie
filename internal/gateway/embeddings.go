@@ -134,7 +134,7 @@ func (s *Server) serveRetrieval(w http.ResponseWriter, r *http.Request, path, op
 		r = heldByGroup(r, g) // held to the group's accounts, if it is
 	}
 	keyWho, keyHeld := keyHolds(r)
-	if keyHeld && (isGroup && !groupAllowed(keyWho, g, ms) || !isGroup && !modelAllowed(keyWho, p, model)) {
+	if isGroup && !groupGiven(r, keyWho, keyHeld, g, ms) || keyHeld && !isGroup && !modelAllowed(keyWho, p, model) {
 		st, msg := keyModelRefusal(w, keyWho, asked)
 		call.Status, call.Error = st, msg
 		writeError(w, provider.Chat, st, msg)
@@ -283,6 +283,8 @@ func (s *Server) serveRetrieval(w http.ResponseWriter, r *http.Request, path, op
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), retrieveTimeout)
+		// the headers the user gave the model
+		ctx = provider.WithModel(ctx, c.p.ID, c.model)
 		// the headers of the vendor's reply passed on (#4145)
 		var heard heardHeaders
 		ctx = withReplySink(ctx, c.p.ID, heard.put)

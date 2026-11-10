@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/capre"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/sessions"
@@ -107,10 +107,11 @@ func pricedRoutes(routes []gateway.Route) []routeJSON {
 	for _, r := range routes {
 		r = publicRoute(r, pub)
 		if looseRoute(r) {
-			if id := ownerOf(r.Agent, r.ResponseID, r.Conv, owners); id != "" {
+			if id := ownerOfRoute(r, owners); id != "" {
 				r.Session = id
 			}
 		}
+		r.LastConvs = nil // the page names no session by them
 		r.Usage = cacheCounted(r.Usage)
 		recs := make([]usage.Record, len(r.Usage))
 		for i, u := range r.Usage {
@@ -157,6 +158,17 @@ func looseKeys(r gateway.Route, now time.Time) []string {
 	}
 	if r.Conv != "" {
 		out = append(out, ownerKey(r.Agent, ownerConv, r.Conv))
+	}
+	// the messages its turn carried, while it is still answering: a
+	// session's file gains them before the request goes out, and a listing
+	// read before that has no key to name it by (Route.LastConvs). Only
+	// for convsKept from its start, as a reply's: a message no file keeps
+	// as sent (an image, a rewritten one) would list every agent's
+	// sessions again each convsFresh for as long as it answers
+	if !r.Done && now.Sub(r.Time) < convsKept {
+		for _, c := range r.LastConvs {
+			out = append(out, ownerKey(r.Agent, ownerLast, c))
+		}
 	}
 	return out
 }
@@ -334,10 +346,10 @@ func mainView(q url.Values) string {
 }
 
 // mainName is the id of a provider or an agent.
-var mainName = regexp.MustCompile(`^[A-Za-z0-9._@:/ -]{1,80}$`)
+var mainName = capre.MustCompile(`^[A-Za-z0-9._@:/ -]+$`, 80)
 
 // mainFind is a line of text to look for, as a search field holds one.
-var mainFind = regexp.MustCompile(`^[^\x00-\x1f\x7f]{0,100}$`)
+var mainFind = capre.MustCompile(`^[^\x00-\x1f\x7f]*$`, 100)
 
 // mainURL is the window's page for a view as mainView gives it, the
 // request's id kept as its own parameter (the panel's link to one request,

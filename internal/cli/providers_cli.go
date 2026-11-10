@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -33,7 +34,7 @@ const providerUsage = `usage:
   magpie provider <id>                    show one provider and its models
   magpie provider add <preset> <key>      add a preset vendor   e.g. magpie provider add deepseek sk-…
                                           again, it adds another (deepseek-2); k=v pairs too: id, name, header.X-Foo
-  magpie provider add <name> k=v…         add a custom vendor   k: url, anthropic, responses, gemini, decide, key, models, catalog, icon, header.X-Foo, balance, balance.path, balance.method, balance.token, models.url, search, user-agent,
+  magpie provider add <name> k=v…         add a custom vendor   k: url, anthropic, responses, gemini, decide, key, models, catalog, icon, header.X-Foo, balance, balance.path, balance.method, balance.token, models.url, list, search, user-agent,
                                           access.key, access.secret (a Volcengine access key, or a Tencent Cloud SecretId and SecretKey, for its plan's windows)
   magpie provider set <id> k=v…           change a provider's settings, with the same k=v pairs as add;
                                           codex=as-sent sends Codex's Responses requests as Codex sent them
@@ -61,6 +62,9 @@ const providerUsage = `usage:
                                           while it is busy or briefly rate limited, asking again after a pause
                                           (at most 4m); patience=off hands the agent the error at once;
                                           patience=default, 1m
+                                          socket=auto sends its Responses turns over the Responses WebSocket,
+                                          over HTTP when it can't, and over HTTP alone for 10m once the host
+                                          refuses it; socket=on tries it every turn; socket=off, the default
                                           errors=pass sends the agent its errors as the vendor sent them:
                                           asked once, nothing read into them, no other provider tried;
                                           errors=magpie, the default, has magpie handle them
@@ -87,6 +91,9 @@ const providerUsage = `usage:
   magpie provider account-cap <id> <account> --window <name> [percent|none|default]
                                           a share for one window alone (e.g. "5 hours" 50): none is no cap on it,
                                           default has it follow the account's cap
+  magpie provider account-cap <id> <account> --window <name> --amount <n|off>
+                                          a fixed amount of a window counted in a unit (e.g. "Daily credits" 300),
+                                          by the vendor's count, spending outside magpie included
   magpie provider pool <id> [--accounts a,b,…] [--cap percent|off] [--stop on|off] [--careful on|off]
                                           a subscription's accounts as one pool: which are in use and in what order,
                                           each one's cap, --stop: answer 429 at the caps rather than go on to the
@@ -98,6 +105,12 @@ const providerUsage = `usage:
                                           how much an API key may spend, in USD as the Usage page prices its calls,
                                           a day (the default), a month or in all from now: at it, routing takes the
                                           key for used up and goes on to the other keys and the fallbacks
+  magpie provider key-balance <id> [key [usd|¥cny|off] [--refill monthly[:day]|weekly[:mon…sun]|off] [--expiring amount@yyyy-mm-dd|off]… [--expiring-remove [amount@]yyyy-mm-dd]…]
+                                          the balance on an API key whose vendor tells none, typed from its own page
+                                          in USD or in yuan (¥100): the Usage page shows it less what magpie prices the
+                                          key's calls at since; with --refill it is whole again each month or week;
+                                          --expiring adds credit that counts through a day and is spent first
+                                          (each one a grant, the soonest spent first; off takes every one off)
   magpie provider account-weight <id> [account [n|default]]
                                           a subscription account's share of the requests with routing=weight:
                                           one weighing 3 takes three for each one weighing 1 takes (default 1)
@@ -150,6 +163,8 @@ const providerUsage = `usage:
                                    (a System One API, POST …/systemone: it routes groups, its models are never an agent's)
        magpie provider add anthropic sk-… id=anthropic-ws2 name="Anthropic WS2" header.anthropic-workspace-id=wrkspc_…
        magpie provider set my-relay models.url=https://relay.example.com/api/models catalog=
+       magpie provider set volcengine list=off models=ep-20261108-abcde
+                                   (its model list is never asked for: only the models given by id are served)
        magpie provider set my-relay search=yes
                                    (the relay answers Claude Code's WebSearch and Codex's web_search itself:
                                     those go to it as sent, not through magpie's own search)
@@ -642,6 +657,8 @@ func providerCmd(args []string) error {
 		return poolCmd(rest)
 	case "account-concurrency", "account-limit":
 		return accountConcurrencyCmd(rest)
+	case "key-balance", "key-balances":
+		return keyBalanceCmd(rest)
 	case "spend-cap", "spend-caps":
 		return spendCapCmd(rest)
 	case "account-weight", "account-weights":
@@ -826,7 +843,9 @@ func announce(id string) error {
 	fmt.Println(green.Render("✓"), "added", saved.Name, muted.Render("("+saved.ID+")"))
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	if ms, err := saved.Fetch(ctx); err == nil {
+	if saved.ListsOff() {
+		// its list is never asked for: the models given by id are its
+	} else if ms, err := saved.Fetch(ctx); err == nil {
 		fmt.Println(green.Render("✓"), len(ms), "models from", fetchedFrom(*saved))
 	} else if !saved.DecideOnly() {
 		// the URLs asked and what they said; the base stays as given
@@ -846,7 +865,12 @@ func announce(id string) error {
 	return nil
 }
 
-func showProvider(p provider.Provider) error {
+func showProvider(p provider.Provider) error { return showProviderAsking(p, true) }
+
+// showProviderAsking is showProvider; with ask false (an import not yet
+// confirmed) the balance query is named, not asked: nothing goes out with
+// the key before the user says yes.
+func showProviderAsking(p provider.Provider, ask bool) error {
 	kv := func(k, v string) {
 		// a plugin's provider is reached through the plugin, not a URL
 		if v != "" && !strings.HasPrefix(v, "plugin://") {
@@ -874,7 +898,7 @@ func showProvider(p provider.Provider) error {
 	if p.Unredacted {
 		why := "  Settings' redaction leaves its requests as written"
 		if !p.SkipsRedaction() {
-			why = "  but masked: another magpie or no address"
+			why = "  but masked: no address"
 		}
 		kv("unmasked", "yes"+muted.Render(why))
 	}
@@ -883,6 +907,9 @@ func showProvider(p provider.Provider) error {
 	}
 	if p.NativeCompaction {
 		kv("compaction", "native"+muted.Render("  Codex's own, sealed by the key or account that answers it"))
+	}
+	if p.Socket != "" {
+		kv("socket", p.Socket)
 	}
 	switch {
 	case p.Account != nil:
@@ -927,8 +954,18 @@ func showProvider(p provider.Provider) error {
 	kv("catalog", p.Catalog)
 	kv("website", p.Website)
 	kv("keys", p.KeysURL)
+	if !ask {
+		if u, field := provider.BalanceQuery(p); u != "" {
+			if p.BalanceMethod != "" {
+				u = strings.ToUpper(p.BalanceMethod) + " " + u
+			}
+			kv("balance", u+" "+muted.Render(field+"  asked once added"))
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	if amount, ok, err := provider.Balance(ctx, p); ok {
+	if !ask {
+		cancel()
+	} else if amount, ok, err := provider.Balance(ctx, p); ok {
 		from := ""
 		// where it was asked: a panel's key query when its account query
 		// has no token left to ask with
@@ -1136,6 +1173,17 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			p.SecretAccessKey = v
 		case "models.url":
 			p.ModelsURL = v
+		case "list":
+			// off: the vendor's model list is never asked for, and only
+			// the models given by id are served (axelburks on Discord)
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "off", "no":
+				p.ListOff = true
+			case "on", "yes", "":
+				p.ListOff = false
+			default:
+				return fmt.Errorf("list=on|off, not %q", v)
+			}
 		case "codex":
 			// as-sent: Codex's requests go to it as Codex sent them, for
 			// a relay that checks they are Codex's own (#1758)
@@ -1187,6 +1235,15 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			default:
 				return fmt.Errorf("additional-tools=on|off|default, not %q", v)
 			}
+		case "socket":
+			// its Responses turns over the Responses WebSocket magpie
+			// speaks to chatgpt.com (#5781): auto leaves a host that
+			// refuses it to HTTP for a while, on tries it every turn
+			s, ok := provider.ParseSocket(v)
+			if !ok {
+				return fmt.Errorf("socket=auto|on|off, not %q", v)
+			}
+			p.Socket = s
 		case "patience":
 			// how long a request to the provider alone is kept while it
 			// is busy, as a group's Patience (zoecats on Discord)
@@ -1253,7 +1310,8 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			// yes: the provider gets the requests as written, unmasked by
 			// Settings' redaction (lc, AcMilan on Discord): the user's word
 			// at any address, a subscription's or a plugin's provider's too
-			// (isee1_1), never another magpie's (provider.SkipsRedaction)
+			// (isee1_1), another magpie's too, which then masks by its own
+			// settings (provider.SkipsRedaction)
 			if v != "yes" && v != "no" {
 				return fmt.Errorf("unmasked=yes|no, not %q", v)
 			}
@@ -1331,6 +1389,9 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			}
 			return fmt.Errorf("unknown field %q\n\n%s", k, providerUsage)
 		}
+	}
+	if p.Socket != "" && !p.TakesSocket() {
+		return fmt.Errorf("socket=%s: %s has no Responses API of its own to speak a WebSocket to; only a provider with responses= and a key can", p.Socket, p.Name)
 	}
 	if p.NativeCompaction && !p.CarriesCompaction() {
 		return fmt.Errorf("compaction=native: %s can't carry Codex's own compaction; only a provider with a Responses API (responses=), a ChatGPT account or GitHub Copilot can", p.Name)
@@ -1413,8 +1474,15 @@ func keyNote() string {
 const containerNote = "these are the container's own addresses: other machines use the host's, and MAGPIE_PUBLIC_URL=http://<host>:<port> puts it here"
 
 // containerLine is where other containers on this host reach the gateway
-// while magpie runs in one, "" when that isn't known.
+// while magpie runs in one, "" when that isn't known. In a LazyCat app on
+// the box's bridge network it says how the box's LAN address gets the
+// port, which LazyCat publishes only to its client's devices (mtoolstec
+// on X).
 func containerLine() string {
+	if gateway.LazyCatURL() != "" && !gateway.LazyCatBox() {
+		port := gateway.Port()
+		return muted.Render("  only devices with the LazyCat client reach " + gateway.LazyCatURL() + "; for the box's LAN IP on port " + port + ", forward port " + port + " to Magpie in LazyCat's LAN port forwarding app")
+	}
 	if u := gateway.ContainerHostURL(); u != "" {
 		return muted.Render("  other containers on this host ") + u
 	}
@@ -1501,6 +1569,10 @@ func serve() error {
 		gateway.SetRestarter(follow.answer)
 		go follow.run(ctx)
 	}
+	// another magpie using this one updated (serve_update.go), and this
+	// one's own Remote magpies follow it
+	gateway.SetUpdater(serveUpdateAsked(follow))
+	go provider.KeepRemotesUpdated(ctx, version)
 	err := s.ListenAndServe(ctx)
 	if exe := follow.restartTo(); exe != "" {
 		// the plugin hosts end, waited for, first, as magpie web's
@@ -1532,7 +1604,7 @@ func importCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := showProvider(p); err != nil {
+	if err := showProviderAsking(p, false); err != nil {
 		return err
 	}
 	if old, err := provider.Find(p.ID); err == nil {
@@ -1623,28 +1695,37 @@ func accountModelsCmd(rest []string) error {
 // accountCapCmd shows, or sets with a share or off, the usage cap of a
 // subscription's accounts: the share of each window one is used to at most
 // (provider.AccountCaps); with --window <name>, the share of that window
-// alone (provider.AccountWindowCaps).
+// alone (provider.AccountWindowCaps); with --amount too, a fixed amount of
+// that window's own unit, credits or requests (provider.AccountWindowAmounts).
 func accountCapCmd(rest []string) error {
-	usage := fmt.Errorf("magpie provider account-cap <id> [account [percent|off]]\n       magpie provider account-cap <id> <account> --window <name> [percent|none|default]")
+	usage := fmt.Errorf("magpie provider account-cap <id> [account [percent|off]]\n       magpie provider account-cap <id> <account> --window <name> [percent|none|default]\n       magpie provider account-cap <id> <account> --window <name> --amount <n|off>")
 	window, windowSet := "", false
+	amount, amountSet := "", false
 	for i := 0; i < len(rest); i++ {
 		a := rest[i]
-		if v, ok := strings.CutPrefix(a, "--window="); ok {
-			window, windowSet = v, true
-			rest = slices.Delete(slices.Clone(rest), i, i+1)
-			i--
-			continue
-		}
-		if a == "--window" {
-			if i+1 >= len(rest) {
-				return usage
+		for _, f := range []struct {
+			name string
+			v    *string
+			set  *bool
+		}{{"--window", &window, &windowSet}, {"--amount", &amount, &amountSet}} {
+			if v, ok := strings.CutPrefix(a, f.name+"="); ok {
+				*f.v, *f.set = v, true
+				rest = slices.Delete(slices.Clone(rest), i, i+1)
+				i--
+				break
 			}
-			window, windowSet = rest[i+1], true
-			rest = slices.Delete(slices.Clone(rest), i, i+2)
-			i--
+			if a == f.name {
+				if i+1 >= len(rest) {
+					return usage
+				}
+				*f.v, *f.set = rest[i+1], true
+				rest = slices.Delete(slices.Clone(rest), i, i+2)
+				i--
+				break
+			}
 		}
 	}
-	if len(rest) < 1 || windowSet && (len(rest) < 2 || strings.TrimSpace(window) == "") {
+	if len(rest) < 1 || windowSet && (len(rest) < 2 || strings.TrimSpace(window) == "") || amountSet && (!windowSet || len(rest) != 2) {
 		return usage
 	}
 	p, err := provider.Find(rest[0])
@@ -1653,6 +1734,18 @@ func accountCapCmd(rest []string) error {
 	}
 	if p.Account == nil {
 		return fmt.Errorf("%s has keys, not subscription accounts with usage windows to cap", p.Name)
+	}
+	if amountSet {
+		n, err := parseWindowAmount(amount)
+		if err != nil {
+			return err
+		}
+		if err := provider.SetWindowAmount(p.ID, rest[1], []string{window}, n); err != nil {
+			return err
+		}
+		if p, err = provider.Find(p.ID); err != nil {
+			return err
+		}
 	}
 	if len(rest) > 2 {
 		if windowSet {
@@ -1694,7 +1787,7 @@ func accountCapCmd(rest []string) error {
 		caps := p.CapsOf(r)
 		if caps.All > 0 {
 			fmt.Printf("%s · capped at %d%% of each usage window\n", r, caps.All)
-		} else if len(caps.Windows) > 0 {
+		} else if len(caps.Windows) > 0 || len(caps.Amounts) > 0 {
 			fmt.Println(r, muted.Render("· no cap on its other windows: used to 100%"))
 		} else {
 			fmt.Println(r, muted.Render("· no cap: used to 100%"))
@@ -1706,8 +1799,25 @@ func accountCapCmd(rest []string) error {
 				fmt.Printf("  %s · capped at %d%%\n", w, c)
 			}
 		}
+		for _, w := range slices.Sorted(maps.Keys(caps.Amounts)) {
+			fmt.Printf("  %s · capped at %s of its unit\n", w, strconv.FormatFloat(caps.Amounts[w], 'f', -1, 64))
+		}
 	}
 	return nil
+}
+
+// parseWindowAmount reads a window's fixed amount as the CLI takes it: a
+// number above 0, "300" or "1,000", or off (0) to lift it.
+func parseWindowAmount(s string) (float64, error) {
+	t := strings.ToLower(strings.TrimSpace(s))
+	if t == "off" || t == "none" || t == "default" || t == "0" {
+		return 0, nil
+	}
+	n, err := strconv.ParseFloat(strings.ReplaceAll(t, ",", ""), 64)
+	if err != nil || !(n > 0) || math.IsInf(n, 0) {
+		return 0, fmt.Errorf("a window's amount is a number above 0, in the window's own unit, or off, not %q", s)
+	}
+	return n, nil
 }
 
 // parseWindowCap reads a window's own share as the CLI takes it: "50",

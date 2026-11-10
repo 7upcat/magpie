@@ -68,7 +68,9 @@ Chromium and WebKit and every language: a wrong key is told so in the
 page's language and shows nothing; the right one shows its limit, its
 usage and most used model, picks that model, and gives Claude Code, Codex,
 OpenAI-compatible and curl setup at the address the page was opened at,
-with a placeholder until "Put my key in the setup" is ticked. A reload
+with a placeholder until "Put my key in the setup" is ticked. Claude
+Code's setup names the pick as ANTHROPIC_MODEL alone and each tier's
+model as the gateway's `tiers` says, leaving out a tier with none. A reload
 keeps the key in the tab, Forget takes it away, and no request carries the
 key in its address. A read-only key gets no setup. Gateway → Gateway keys
 shows the page's address (the LAN one, or `MAGPIE_PUBLIC_URL`) with a
@@ -392,6 +394,13 @@ the key's field and its placeholder is the field's hint, while a way labelled
 only "API key" keeps "<name> API key"; the provider's own icon shows on its
 row. English and Chinese, Chromium and WebKit, with the API faked.
 
+`plugin-ask-ways.test.cjs` checks a moved subscription whose plugin's
+first way asks a question first (Kiro's sign-in methods): the question
+offers "Other ways to sign in…", which shows every way, the API key among
+them, and a later question doesn't; the plugin's labels, messages and hints
+show in the window's language when it gives them by language, else as
+written. English and Chinese, Chromium and WebKit, with the API faked.
+
 `plugin-market.test.cjs` checks the Plugins tab: Discover lists the
 suggested plugins in their two sections, a card installs its plugin and
 then offers its sign-in, which opens in the Providers add sheet; a search
@@ -666,7 +675,7 @@ and WebKit, at 1280px, 640px and 420px, with no sideways scroll.
 `name-suffix-where-named.test.cjs` checks the setting that says whether a
 provider's name or "· routing group" follows a name in the agents' lists (#868)
 where names are given, in Chromium and WebKit, English and Chinese. The
-provider editor's Names, prices & levels has its three choices and says what the lists
+provider editor's Model settings has its three choices and says what the lists
 show. For the groups it is one setting for all of them, so it sits under the
 list on the Routing groups page (PAMI on Discord: in one group's editor it read
 as that group's): a group's editor has no choices, only what its group will be
@@ -848,6 +857,15 @@ Tools tab of the contents lists only tools; nothing scrolls sideways — in
 Chromium and WebKit, in English, Chinese, Japanese and German, at 1100px and
 420px. With the state answering after the history, the cards drawn by the
 agents' ids take their names once it is in, though the history is the same.
+
+`sessions-context-line.test.cjs` opens a session's details on the Sessions
+page (liang_yongxiang on Discord): one the gateway sent calls of asks
+`/api/context/session` once, with its first and last, and draws a Context
+line, a point a request telling its share of the window and the fullest
+share beside it, toned; a point clicked opens that request in Routing with
+its card; one the gateway kept no prompt of, or never saw, has no line, and
+the second isn't asked; opened again it is drawn without asking — in
+Chromium and WebKit, in all five languages, at 1100px and 420px.
 
 `tray-usages.test.cjs` picks several of the Usage page's cards for the menu
 bar in Settings: the menu keeps open as Codex and Claude Code are ticked
@@ -1531,7 +1549,7 @@ Chromium and WebKit, English and Chinese: Detect APIs' "Each picked model"
 posts provider/detect with every model picked (detectModels) and shows model
 by API, each a ✓ with the time or a ✗ with why; "Use these" sets the URLs
 that answered and gives each model that answered on one API only that API in
-Names, prices & levels, unsaved, sending nothing until the Save carries them as
+Model settings, unsaved, sending nothing until the Save carries them as
 modelPrefs, while a model answering on two stays Auto. A chip's right-click
 Test says the API it was asked on ("answered via Responses"). No click moves
 the page, nothing has a left-border accent, and every string has its
@@ -1962,7 +1980,11 @@ the OpenAI/Anthropic switch keeps that host and doesn't move the page. Opened
 at localhost, the container's address stays and the row says it is the
 container's own and to set `MAGPIE_PUBLIC_URL`. Outside a container nothing
 changes. No coloured left border; English and Chinese, Chromium and WebKit,
-with `/api/plugins` faked.
+with `/api/plugins` faked. With `MAGPIE_PUBLIC_URL` at the NAS's private
+192.168.31.218 (jiezhengj on Discord), the Gateway page's list, Connect's
+menu and About name it the local network's, not "Public address", and the
+Docker bridge's 172.17.0.1 other containers'; an internet address is named
+the internet's. Every language, at 1100 and 420 wide.
 
 `routing-time.test.cjs` checks a routing group's rule for hours of the day
 (Discord: send a provider's peak-price hours, DeepSeek's or GLM's, to
@@ -2114,7 +2136,7 @@ with nothing shared), and a network address that needs an enabled gateway
 key. English and Chinese, Chromium and WebKit, with `/api/plugins` faked.
 
 `public-url-default.test.cjs` checks that Connect starts at MAGPIE_PUBLIC_URL,
-labelled Public address, with the snippets on it, until an address is
+labelled Public address (对外地址) when it is a name, with the snippets on it, until an address is
 picked, and that a pick (this computer's) is kept after a reload (#1551).
 About shows the public URL beside the local one; magpie web shows it as the
 gateway's address and the MCP server's, the app keeps those local. Without
@@ -2380,6 +2402,20 @@ compare the same completed API state rather than a loading-order difference.
 node --test internal/gui/tests/mobile-web.test.cjs internal/gui/tests/old-webkit.test.cjs
 ```
 
+`phone-no-sideways.test.cjs` (#4943) opens every top-level view, Usage's four
+tabs and Settings' tabs on an iPhone 13 in the dark theme, filled with long
+names (accounts, a group, sessions, model ids, 30 requests). The document and
+the open view are no wider than the phone, nothing runs past its sides outside
+a box that scrolls on its own, and no empty band is held sticky at the view's
+foot (bars of buttons held there are meant); the Requests table's stand-in
+scrollbar stays hidden on a touch screen.
+At 375px in all five languages and at 390 and 430 in English, Chromium and
+WebKit. `MAGPIE_ASSETS` points it at older assets to see it fail.
+
+```sh
+node --test internal/gui/tests/phone-no-sideways.test.cjs
+```
+
 ## Routing request metrics
 
 `routing-request-metrics.test.cjs` checks request-row cache hit rates (cache
@@ -2492,10 +2528,10 @@ node --test internal/gui/tests/cli-path.test.cjs
 ```
 
 `update-mirror.test.cjs` checks Settings › About › Download source (#893):
-the row says updates come from GitHub; Use a mirror… opens an address field,
+the row says updates come from usemagpie.ai, then GitHub; Use a mirror… opens an address field,
 an http:// address is refused with the reason in red and the draft kept, an
 https:// one saved with Enter posts `/api/settings/update-mirror` and is
-shown, and Use GitHub posts an empty mirror. A download that failed through
+shown, and Remove mirror posts an empty mirror. A download that failed through
 the mirror says so on the Version row and offers Download from GitHub, which
 posts the empty mirror then `/api/update/install`. No native select, no left
 border, no click scrolls. English and Chinese, Chromium and WebKit; the API

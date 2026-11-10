@@ -15,13 +15,14 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
-	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/probelog"
 )
 
@@ -265,7 +266,9 @@ func tinyBody(q Provider, proto Protocol, model string) (url, body string) {
 // sign-in or ask its vendor more than once before it answers, as it does
 // for the gateway, which gives it no such bound (mingxia_16024 on
 // Discord: every Qoder and WorkBuddy model's test ended at 20s while
-// agents were answered).
+// agents were answered), and for a remote magpie, whose gateway serves
+// such plugins' models in turn and asks again where its own retries do
+// (plugins#827: a plugin model tested in 60s here had 20s through it).
 // connectWait is how long a probe waits for its connection (a TLS
 // handshake done, through any proxy) before it gives up on the host: an
 // address nothing answers at is said in that time, not the whole wait's
@@ -792,6 +795,7 @@ func probe(ctx context.Context, p Provider, proto Protocol, url string, body []b
 }
 
 func probeOnce(ctx context.Context, p Provider, proto Protocol, url string, body []byte, model string, wait time.Duration) (r Result) {
+	ctx = WithModel(ctx, p.ID, model) // the model's own headers, as its requests carry
 	r = Result{Protocol: proto, Model: model}
 	if model == "" {
 		r.Error = "no model to try: expose one, or refresh the model list"
@@ -803,6 +807,11 @@ func probeOnce(ctx context.Context, p Provider, proto Protocol, url string, body
 		// answers the gateway, not the probe's: a cold host took the
 		// whole of it (mingxia_16024)
 		p.warmPlugin(ctx)
+		wait = max(wait, pluginTestWait)
+	}
+	if p.IsRemoteMagpie() {
+		// it serves plugins' models too, and retries for them
+		// (pluginTestWait)
 		wait = max(wait, pluginTestWait)
 	}
 	ctx, cancel := context.WithTimeout(probelog.WithModel(ctx, model), wait)
@@ -852,6 +861,11 @@ func probeOnce(ctx context.Context, p Provider, proto Protocol, url string, body
 		// a model its vendor has queued is said so at once, not waited
 		// out for minutes as an agent's turn is (Qoder's free models)
 		req.Header.Set(FallbackHeader, "1")
+	}
+	if p.IsRemoteMagpie() {
+		// its gateway takes no pause that ends past the test's wait, and
+		// the test is told the error (WaitHeader, plugins#827)
+		req.Header.Set(WaitHeader, strconv.Itoa(int(wait/time.Second)))
 	}
 	if err := p.Sign(ctx, req, proto, body); err != nil {
 		r.Error = err.Error()
@@ -1027,7 +1041,7 @@ const BlockedHint = "the provider's network firewall blocked requests from this 
 // | … used Cloudflare to restrict access" page, and the plain-text
 // "error code: 1020" (and the other access-denied codes, 1005 to 1012) it
 // answers a client that takes no HTML.
-var edgeBlocked = regexp.MustCompile(`(?i)request has been blocked|errors\.aliyun\.com|you have been blocked|used cloudflare to restrict access|error code: 10(0[5-9]|1[0-2]|20)\b`)
+var edgeBlocked = lazyre.New(`(?i)request has been blocked|errors\.aliyun\.com|you have been blocked|used cloudflare to restrict access|error code: 10(0[5-9]|1[0-2]|20)\b`)
 
 // EdgeBlocked says whether an error body is a firewall's block page rather
 // than the vendor's API answering, or one already put in plain words.
@@ -1076,17 +1090,17 @@ func APIError(b []byte, fallback string) string {
 // …" (#969). Go's key is only taken where Command Code's CLI asks, which
 // the Command Code plugin does; an API-key provider (the "commandcode"
 // preset) never can.
-var cmdGoNoAPI = regexp.MustCompile(`(?i)\bGo plan doesn.t include API access`)
+var cmdGoNoAPI = lazyre.New(`(?i)\bGo plan doesn.t include API access`)
 
 // CommandCodeGoHint says where a Go plan's key works.
 const CommandCodeGoHint = "a Go plan's key works in magpie through the Command Code plugin (Plugins › Command Code, then sign in with the key), which asks Command Code as its CLI does; a Command Code API-key provider can't use it"
 
 // verifyWords is a refusal asking for the account to be verified, put in
 // words rather than as VALIDATION_REQUIRED — or already by VerifyMessage.
-var verifyWords = regexp.MustCompile(`(?i)verify your account|account verification required|` + verifyAdvice)
+var verifyWords = lazyre.New(`(?i)verify your account|account verification required|` + verifyAdvice)
 
 // verifyLink is the link in a message VerifyMessage put in words.
-var verifyLink = regexp.MustCompile(verifyAdvice + `: open (https://[^\s"\\]+) in a browser`)
+var verifyLink = lazyre.New(verifyAdvice + `: open (https://[^\s"\\]+) in a browser`)
 
 // Verification says whether an error body is Google's refusal of an account
 // it wants verified first — Cloud Code Assist's 403 whose details say
@@ -1289,10 +1303,10 @@ const NoDetails = "refused with no details (an empty reply, often from a firewal
 
 // pageStart is how a web page begins, or a fragment of one that a proxy
 // serves as its error.
-var pageStart = regexp.MustCompile(`(?i)^<(!doctype\s+html|html[\s>]|head[\s>]|body[\s>]|title[\s>]|meta[\s>])`)
+var pageStart = lazyre.New(`(?i)^<(!doctype\s+html|html[\s>]|head[\s>]|body[\s>]|title[\s>]|meta[\s>])`)
 
 // pageTitle is a web page's title.
-var pageTitle = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+var pageTitle = lazyre.New(`(?is)<title[^>]*>(.*?)</title>`)
 
 // PageTitle is a web page's title as plain words, cut to 120 runes: no
 // markup, entities read, whitespace folded. "" when there is none.
@@ -1309,7 +1323,7 @@ func PageTitle(b []byte) string {
 }
 
 // tagRe is a markup tag, taken out of a title that holds one.
-var tagRe = regexp.MustCompile(`<[^>]*>`)
+var tagRe = lazyre.New(`<[^>]*>`)
 
 // statusLine says a fallback is an HTTP error's status ("403 Forbidden",
 // or its text alone, "Forbidden"), what an error body was answered with,
@@ -1360,7 +1374,7 @@ func WebPage(b []byte) (string, bool) {
 
 // unshown is markup whose words aren't a reader's: a script, a style
 // sheet, a comment, an XML declaration.
-var unshown = regexp.MustCompile(`(?is)<script[^>]*>.*?</script\s*>|<style[^>]*>.*?</style\s*>|<!--.*?-->|<\?.*?\?>|<!doctype[^>]*>`)
+var unshown = lazyre.New(`(?is)<script[^>]*>.*?</script\s*>|<style[^>]*>.*?</style\s*>|<!--.*?-->|<\?.*?\?>|<!doctype[^>]*>`)
 
 // MarkupText is the words markup holds, as plain words: scripts, styles
 // and comments out, then every tag, entities read, whitespace folded, cut

@@ -56,6 +56,13 @@ func init() {
 	// but not when Codex's account is switched while its provider takes
 	// no ChatGPT account: the app-server goes by none
 	provider.CodexNoAccount = codexNoAccount
+	// and whether the takeover was turned off by the user rather than
+	// ended by the reset (Keep on ChatGPT, Always ChatGPT, a Disconnect)
+	provider.CodexTakeoverOff = func() bool {
+		home, _ := homes()
+		a := codex(home)
+		return a.AppOutOff != nil && a.AppOutOff()
+	}
 	// and when none starts in place of the one ended, the app is
 	// reopened on Windows, where its stdout was held open
 	provider.CodexAppOpen = codexAppOpen
@@ -192,9 +199,13 @@ var others = []*Agent{
 // Clients is everyone whose requests the gateway knows by name: every
 // agent, detected or not, and the others. It is what the Usage and
 // Routing views draw a request's client with.
-func Clients() []*Agent {
+func Clients() []*Agent { return ClientsIn(All()) }
+
+// ClientsIn is Clients among all, a list of All() the caller has built
+// already.
+func ClientsIn(all []*Agent) []*Agent {
 	var out []*Agent
-	for _, a := range All() {
+	for _, a := range all {
 		// a WSL agent's requests are its Windows twin's by their UA
 		if a.WSL == "" {
 			out = append(out, a)
@@ -282,6 +293,7 @@ func onMachine(home, cfg string) []*Agent {
 		qwen(home),
 		muse(cfg),
 		empryo(home),
+		nanobot(home),
 		ante(home),
 		astrbot(home),
 		qwenpaw(home),
@@ -313,6 +325,7 @@ func onMachine(home, cfg string) []*Agent {
 		alma(),
 		cindy(),
 		aionui(),
+		cherryStudio(home),
 		lody(home),
 	}, append(ompProfiles(home), qwenpawAgents(home)...)...)
 }
@@ -649,10 +662,12 @@ func magpieProviderJSONAt(shape, catalog, gw string) any {
 
 // piBlockKept is theirsKept for magpie's provider in a Pi models.json at
 // path, where a sendSessionAffinityHeaders the file already has, the
-// user's own or pi-cache-optimizer's (#1103), stays as it is.
+// user's own or pi-cache-optimizer's (#1103), stays as it is, as does a
+// model's maxTokens the user typed there (piOutputsKept).
 func piBlockKept(path string, value func() any) func() any {
 	return theirsKept(path, "providers."+magpieID, func() any {
 		v := value()
+		piOutputsKept(path, v)
 		if _, set := edit.GetJSON(path, "providers."+magpieID+".compat.sendSessionAffinityHeaders"); !set {
 			return v
 		}
@@ -675,10 +690,16 @@ func piBlockKept(path string, value func() any) func() any {
 // writes it under its name is magpie's: one the model has no longer, a
 // level gone or a fast mode lost, goes.
 //
-// A setCacheKey the file has already is the user's, false too (#5468).
+// A setCacheKey the file has already is the user's, false too (#5468), and
+// so is a model's limit.output they typed there (openCodeOutputsKept).
 func openCodeKept(path string, value func() any) func() any {
 	return theirsKept(path, "provider."+magpieID, func() any {
 		v := value()
+		if block, ok := v.(map[string]any); ok {
+			if ms, ok := block["models"].(orderedJSON); ok {
+				openCodeOutputsKept(path, ms)
+			}
+		}
 		if _, set := edit.GetJSON(path, "provider."+magpieID+".options.setCacheKey"); set {
 			v = withoutOption(v, "options", "setCacheKey")
 		}

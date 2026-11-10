@@ -195,6 +195,14 @@ type Route struct {
 	// whose agent keeps it can be found again after the fact even when its
 	// conversation opening is one a fork copied (dshConvs)
 	ResponseID string `json:"responseId,omitempty"`
+	// LastConvs: the ids of the user messages the request's turn carries,
+	// newest first (dshLastConvs): a dsh fork copies its source's opening,
+	// so both answer the same Conv, and a request still answering has no
+	// reply id yet. The turn's messages are what say which branch it is
+	// of, as that branch's own file has them (sessions' TurnConvs, gui's
+	// ownerLast). Only a live route needs them: the history keeps none
+	// (saveRoute)
+	LastConvs []string `json:"lastConvs,omitempty"`
 	// Folder: the last two levels of the folder its agent says it works
 	// in (shortFolder), never the whole path; a request that says none
 	// takes its session's, as said last (#1068)
@@ -273,7 +281,7 @@ type NestedRule struct {
 
 // groupRef is the trace's g, with its models ms.
 func groupRef(g provider.Group, ms []provider.Member) *GroupRef {
-	ref := &GroupRef{ID: g.ID, Ref: g.Ref(), Name: g.Name, Routing: g.Routing, Affinity: g.Affinity, Auto: g.Auto, Sink: sinks(g.Sink, g.Routing)}
+	ref := &GroupRef{ID: g.ID, Ref: g.Ref(), Name: g.Name, Routing: g.Routing, Affinity: g.Affinity, Auto: g.Auto, Sink: sinks(g.Sinks(), g.Routing)}
 	seen := map[string]bool{}
 	for _, m := range ms {
 		ref.Members = append(ref.Members, m.Spelled())
@@ -337,8 +345,16 @@ type Weighed struct {
 	Unit   string  `json:"unit,omitempty"`
 	// Balance is a prepaid wallet's left in Unit (left.bal, #3950): the
 	// Routing page tells the figure, not a share
-	Balance  *float64          `json:"balance,omitempty"`
-	Renews   []time.Time       `json:"renews,omitempty"`   // when those windows renew, the biggest first
+	Balance *float64    `json:"balance,omitempty"`
+	Renews  []time.Time `json:"renews,omitempty"` // when those windows renew, the biggest first
+	// Soon is Renews as Smart sorted by them (left.soon,
+	// Allowance.Renewal): a credit pack's end where it comes before its
+	// window's reset, an auto-used reset, a window not started taken to
+	// run its span from now. Lapse is when the soonest credits left are
+	// lost (left.lapse), Smart's tie-break: the Routing page tells the
+	// order by these, the keys it was sorted by (#5646)
+	Soon     []time.Time       `json:"soon,omitempty"`
+	Lapse    *time.Time        `json:"lapse,omitempty"`
 	Pace     float64           `json:"pace,omitempty"`     // remaining allowance per hour until its window resets
 	Due      *time.Time        `json:"due,omitempty"`      // when the allowance window used for pace resets
 	Tokens   float64           `json:"tokens,omitempty"`   // least used: tokens it served lately
@@ -364,6 +380,11 @@ type Weighed struct {
 	// "expiry" when it is when credits in them expire, sooner than they
 	// renew (Allowance.Pace)
 	DueBy string `json:"dueBy,omitempty"`
+	// Unreached: how many of Renews' windows, the biggest first, Smart
+	// passes over, as what they have left can't be used up before they
+	// renew unless the next one's is used first: the next one ranks it
+	// (left.unreached, #5639)
+	Unreached int `json:"unreached,omitempty"`
 	// Restarts: when that reset starts them again, set when it is sooner
 	// than its biggest window renews — Smart goes by it then (#718)
 	Restarts *time.Time `json:"restarts,omitempty"`
@@ -375,11 +396,20 @@ type Weighed struct {
 	// other accounts (Group.Accounts): HeldBy names that group
 	Held   bool   `json:"held,omitempty"`
 	HeldBy string `json:"heldBy,omitempty"`
+	// HeldOwn: HeldBy's group names this model on another account of
+	// its provider (Member.Account, EastonXvii on X), rather than holding
+	// the whole group to some
+	HeldOwn bool `json:"heldOwn,omitempty"`
 	// Capped: left out as held at the usage cap the user set on the
 	// account, this cap in percent; Used is then its fullest window's
 	// share, CapBack when the last window at or past it renews
 	Capped  int        `json:"capped,omitempty"`
 	CapBack *time.Time `json:"capBack,omitempty"`
+	// CapAmount: held (Capped) at a window's fixed amount of its own unit
+	// rather than a share: CapCount of it used, in CapUnit
+	CapAmount float64 `json:"capAmount,omitempty"`
+	CapCount  float64 `json:"capCount,omitempty"`
+	CapUnit   string  `json:"capUnit,omitempty"`
 	// NoCredits: held at 100% (Capped), a Codex account the user set not
 	// to spend its credits once its allowance is used up
 	NoCredits bool `json:"noCredits,omitempty"`
@@ -587,6 +617,11 @@ func weighed(c candidate, p provider.Provider, wg weighing, fallback bool, from 
 	}
 	if l, ok := wg.lefts[c.allowanceKey()]; ok {
 		w.Known, w.Used, w.Renews, w.Pace, w.Credits, w.CreditsFirst = true, l.used, l.renews, l.pace, l.credits, l.first
+		w.Unreached, w.Soon = l.unreached, l.soon
+		if !l.lapse.IsZero() {
+			lp := l.lapse
+			w.Lapse = &lp
+		}
 		w.WeekLow = l.weekLow && keepsWeek(p.Routing)
 		if !l.fullest.IsZero() {
 			ur := l.fullest

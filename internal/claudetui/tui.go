@@ -29,7 +29,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,6 +38,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yetone/magpie/internal/appdir"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/wslrun"
 )
 
@@ -357,7 +357,7 @@ func (s *shim) read() {
 	}
 }
 
-var ansi = regexp.MustCompile(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[P^_][^\x1b]*\x1b\\|\x1b.`)
+var ansi = lazyre.New(`\x1b\[[0-9;?<>=]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[P^_][^\x1b]*\x1b\\|\x1b.`)
 
 // plain is what Claude Code drew since the screen was last cleared
 // (clearScreen), its escapes taken out.
@@ -457,17 +457,17 @@ func (s *shim) lastScreen() string {
 }
 
 var (
-	trustNo  = regexp.MustCompile(`❯\s*No,\s*exit`)
-	trustYes = regexp.MustCompile(`❯\s*Yes,\s*I trust`)
+	trustNo  = lazyre.New(`❯\s*No,\s*exit`)
+	trustYes = lazyre.New(`❯\s*Yes,\s*I trust`)
 	// the Bypass Permissions disclaimer's Yes (#5042): the disclaimer
 	// pairs the same "No, exit" with it as the trust question does
-	bypassYes = regexp.MustCompile(`❯\s*Yes,\s*I accept`)
+	bypassYes = lazyre.New(`❯\s*Yes,\s*I accept`)
 	// how long a Yes stays drawn before Enter is pressed on it
 	trustSettle = 300 * time.Millisecond
 )
 
 // lastAt is where re's last match in p starts, -1 with none.
-func lastAt(re *regexp.Regexp, p string) int {
+func lastAt(re *lazyre.RE, p string) int {
 	m := re.FindAllStringIndex(p, -1)
 	if len(m) == 0 {
 		return -1
@@ -500,7 +500,7 @@ var errUntrusted = errors.New(Untrusted + ", which only its user answers")
 // signIn is what Claude Code's interactive mode shows where it is not
 // signed in, as -p may be (CLAUDE_CODE_OAUTH_TOKEN, a container whose
 // ~/.claude.json has no onboarding done): nothing the helper may answer.
-var signIn = regexp.MustCompile(`Select login method|Log in with your Claude account|claude\.ai/oauth/authorize`)
+var signIn = lazyre.New(`Select login method|Log in with your Claude account|claude\.ai/oauth/authorize`)
 
 // The screens Claude Code's interactive mode shows where its onboarding
 // isn't done (a config folder only -p was run in, or one signed in where
@@ -514,8 +514,8 @@ var signIn = regexp.MustCompile(`Select login method|Log in with your Claude acc
 // words, any space between them one: Claude Code draws some by moving the
 // cursor.
 var (
-	firstRun      = regexp.MustCompile(`Security notes:.*Press Enter to continue`)
-	terminalSetup = regexp.MustCompile(`terminal setup\?.*Esc to skip`)
+	firstRun      = lazyre.New(`Security notes:.*Press Enter to continue`)
+	terminalSetup = lazyre.New(`terminal setup\?.*Esc to skip`)
 )
 
 // onboardTries is how often one onboarding screen is answered before the
@@ -921,7 +921,7 @@ func usageDrawn(screen string) bool {
 // limiting requests to the usage page (not your usage limit). Try again
 // in a moment.", "Error: Usage endpoint is rate limited until 12:11am."),
 // which were read as a panel with no window.
-var usageFailed = regexp.MustCompile(`Failed to load usage data|limiting requests to the usage page|Usage endpoint is rate limited`)
+var usageFailed = lazyre.New(`Failed to load usage data|limiting requests to the usage page|Usage endpoint is rate limited`)
 
 // NoUsageWindow is what the helper tells for a /usage panel that loaded
 // with none of the account's windows drawn: each is left out until the
@@ -929,7 +929,7 @@ var usageFailed = regexp.MustCompile(`Failed to load usage data|limiting request
 const NoUsageWindow = "No usage window has started"
 
 // usageWindow is one of the account's windows as usageText tells it.
-var usageWindow = regexp.MustCompile(`(?m)^Current (?:session|week)\b`)
+var usageWindow = lazyre.New(`(?m)^Current (?:session|week)\b`)
 
 // usageNoWindow says whether screen is /usage's panel loaded, its figures
 // told, with none of the account's windows among them: the Usage tab's
@@ -951,11 +951,11 @@ func usageNoWindow(screen string) bool {
 }
 
 var (
-	usageSession = regexp.MustCompile(`\bSession\b|\bTotal cost:`)
-	usageCurrent = regexp.MustCompile(`\bCurrent (?:session|week)\b`)
+	usageSession = lazyre.New(`\bSession\b|\bTotal cost:`)
+	usageCurrent = lazyre.New(`\bCurrent (?:session|week)\b`)
 	// the panel's "Error: …", however many rows it wraps to, up to the
 	// keys it draws under it ("r to retry · Esc to cancel")
-	usageError = regexp.MustCompile(`\bError: .*?(?: r to retry\b|$)`)
+	usageError = lazyre.New(`\bError: .*?(?: r to retry\b|$)`)
 )
 
 // usagePart is the words of /usage's panel in t (its fields joined) that
@@ -972,7 +972,7 @@ func usagePart(t string) string {
 	return strings.Join(strings.Fields(usageCost.ReplaceAllString(t[at[0]:], "")), " ")
 }
 
-var usageCost = regexp.MustCompile(`\bTotal cost:.*?\bcache write\b`)
+var usageCost = lazyre.New(`\bTotal cost:.*?\bcache write\b`)
 
 // usageWhy is why /usage's panel told no figures, as it says it: its
 // "Error: …" whole, else what it drew from its tabs on, not Claude Code's
@@ -993,16 +993,16 @@ func usageWhy(screen string) string {
 // own replies ("Partial usage data", "Could not refresh usage data") are
 // today's, and are told.
 var (
-	usageRefreshing = regexp.MustCompile(`\bRefreshing(?:…|\.\.\.)`)
-	usageStale      = regexp.MustCompile(`Showing last-known usage[^\n]*?\)|Showing last-known usage`)
+	usageRefreshing = lazyre.New(`\bRefreshing(?:…|\.\.\.)`)
+	usageStale      = lazyre.New(`Showing last-known usage[^\n]*?\)|Showing last-known usage`)
 )
 
 var (
-	usageName    = regexp.MustCompile(`^(session|week(?: \([^)]*\))?)`)
-	usageUsed    = regexp.MustCompile(`([0-9.]+)%\s+used`)
-	usageReset   = regexp.MustCompile(`Resets (.*?\))`)
-	usagePanel   = regexp.MustCompile(`\bSettings\b.*\bUsage\b`)
-	usageLoading = regexp.MustCompile(`(?i)\bloading\b`)
+	usageName    = lazyre.New(`^(session|week(?: \([^)]*\))?)`)
+	usageUsed    = lazyre.New(`([0-9.]+)%\s+used`)
+	usageReset   = lazyre.New(`Resets (.*?\))`)
+	usagePanel   = lazyre.New(`\bSettings\b.*\bUsage\b`)
+	usageLoading = lazyre.New(`(?i)\bloading\b`)
 )
 
 // usageText is the plan's allowance as /usage's panel shows it, each
@@ -1200,20 +1200,25 @@ func pasteClean(text string) string {
 	}, text)
 }
 
-// send pastes a message's pieces into Claude Code's prompt, each image
-// once the prompt shows the one before (its file is read as it is pasted,
-// and words pasted meanwhile would come before it), and presses Enter,
-// again while the message hasn't reached the transcript: an Enter that
-// lands while the paste is still being taken in is part of it.
+// send pastes a message's pieces into Claude Code's prompt, each once the
+// prompt shows the one before, and presses Enter, again while the message
+// hasn't reached the transcript: an Enter that lands while the paste is
+// still being taken in is part of it. A piece is taken in a moment after
+// it is pasted where Claude Code reads a file for it: an image's path, and
+// words with a line that names an image file ("a.jpg" in an ls), which it
+// tries as one before it takes the words. Claude Code takes any paste
+// ending as the end of pasting, so a piece pasted meanwhile that is taken
+// first lets Enter send the message without the words, and they show in
+// the prompt after it (2.1.318).
 func (s *shim) send(pieces []piece) error {
 	s.rowsMu.Lock()
 	before, busy := s.rows, s.busy
 	s.rowsMu.Unlock()
-	text, image := "", 0
+	marker := 0
 	for i, p := range pieces {
+		var err error
 		if p.image != "" {
-			var err error
-			if image, err = s.pasteImage(s.path(p.image), image); err != nil {
+			if marker, err = s.pasteImage(s.path(p.image), marker); err != nil {
 				return err
 			}
 			continue
@@ -1230,10 +1235,9 @@ func (s *shim) send(pieces []piece) error {
 		if _, err := io.WriteString(s.pty, "\x1b[200~"+p.text+"\x1b[201~"); err != nil {
 			return err
 		}
-		text = p.text
-	}
-	if err := s.shown(text); err != nil {
-		return err
+		if marker, err = s.shown(p.text, marker); err != nil {
+			return err
+		}
 	}
 	time.Sleep(150 * time.Millisecond)
 	for try := 0; try < 4; try++ {
@@ -1261,7 +1265,56 @@ func (s *shim) send(pieces []piece) error {
 	return fmt.Errorf("Claude Code did not take the message: %s", s.lastScreen())
 }
 
-var imageShown = regexp.MustCompile(`\[Image #(\d+)\]`)
+var imageShown = lazyre.New(`\[Image #(\d+)\]`)
+
+// promptRule is a row of the rules Claude Code draws over and under its
+// prompt.
+var promptRule = lazyre.New(`^\s*─{20,}\s*$`)
+
+// prompt is the prompt as the screen shows it, its words one space apart:
+// the rows between the screen's last two rules, "" with no such rows. A
+// prompt grown past a row is drawn again only where it changed, the cells
+// already right skipped by a move of the cursor: what was drawn since a
+// paste (plain) held "3" of the "[Image #33]" it took, and "[Pasted t xt
+// #16" of a paste taken before (#5654, Claude Code 2.1.319). Its words
+// wrap where the row ends, so a mark can start on one row and end on the
+// next.
+func (s *shim) prompt() string {
+	s.screenMu.Lock()
+	var t string
+	if s.grid != nil {
+		t = s.grid.text()
+	}
+	s.screenMu.Unlock()
+	rows := strings.Split(t, "\n")
+	end := -1
+	for i := len(rows) - 1; i >= 0; i-- {
+		if !promptRule.MatchString(rows[i]) {
+			continue
+		}
+		if end < 0 {
+			end = i
+			continue
+		}
+		return strings.Join(strings.Fields(strings.Join(rows[i+1:end], " ")), " ")
+	}
+	return ""
+}
+
+// lastMark is the number of the mark re matches at the end of the prompt
+// as the screen shows it (prompt), 0 with none: the paste taken last, as
+// a paste goes where the prompt's words end.
+func lastMark(re *lazyre.RE, prompt string) int {
+	m := re.FindAllStringSubmatchIndex(prompt, -1)
+	if len(m) == 0 || m[len(m)-1][1] != len(prompt) {
+		return 0
+	}
+	n, _ := strconv.Atoi(prompt[m[len(m)-1][2]:m[len(m)-1][3]])
+	return n
+}
+
+// textLast is Claude Code's whole mark of a long paste.
+var textLast = lazyre.New(`\[Pasted text #(\d+) \+\d+ lines\]`)
 
 // path is where Claude Code reads a file of the helper's at path: one in
 // WSL under the distro's mount of the drive.
@@ -1273,8 +1326,10 @@ func (s *shim) path(path string) string {
 }
 
 // pasteImage pastes an image file's path, and waits for the prompt to show
-// it taken as an image: one numbered past after, the message's image
-// before it. It returns the number shown.
+// it taken as an image: one numbered past after, the message's paste
+// before it (Claude Code numbers images and long pasted text alike), drawn
+// since the paste or ending the prompt as the screen shows it (prompt). It
+// returns the number shown.
 func (s *shim) pasteImage(path string, after int) (int, error) {
 	s.clearScreen()
 	if _, err := io.WriteString(s.pty, "\x1b[200~"+path+"\x1b[201~"); err != nil {
@@ -1282,10 +1337,8 @@ func (s *shim) pasteImage(path string, after int) (int, error) {
 	}
 	by := time.After(pasteWait)
 	for {
-		for _, m := range imageShown.FindAllStringSubmatch(s.plain(), -1) {
-			if n, _ := strconv.Atoi(m[1]); n > after {
-				return n, nil
-			}
+		if n := s.imageTaken(after); n > 0 {
+			return n, nil
 		}
 		select {
 		case <-s.changed:
@@ -1298,6 +1351,21 @@ func (s *shim) pasteImage(path string, after int) (int, error) {
 	}
 }
 
+// imageTaken is the number of the image the prompt shows taken, numbered
+// past after: drawn since the paste, or ending the prompt as the screen
+// shows it (prompt). 0 while it shows none.
+func (s *shim) imageTaken(after int) int {
+	for _, m := range imageShown.FindAllStringSubmatch(s.plain(), -1) {
+		if n, _ := strconv.Atoi(m[1]); n > after {
+			return n
+		}
+	}
+	if n := lastMark(imageShown, s.prompt()); n > after {
+		return n
+	}
+	return 0
+}
+
 // shownWait is how long a paste of n bytes may take to show: Claude Code
 // takes a long one in at about 100KB a second (a real 3MB paste showed
 // "[Pasted text" after 35s), so pasteWait and a second for every 64KB.
@@ -1305,11 +1373,18 @@ func shownWait(n int) time.Duration {
 	return pasteWait + time.Duration(n/(64<<10))*time.Second
 }
 
+var textShown = lazyre.New(`\[Pasted text #(\d+)`)
+
 // shown waits for the prompt to show pasted text: its last words, or
-// Claude Code's "[Pasted text" for a long one. Text "" waits for nothing.
-func (s *shim) shown(text string) error {
+// Claude Code's "[Pasted text #<n>" for a long one, numbered past after,
+// the message's paste before it: the prompt drawn again shows those
+// before. They are looked for in what was drawn since the paste, and at
+// the end of the prompt as the screen shows it (prompt). It returns the
+// number shown, or after where the words show as themselves. Text ""
+// waits for nothing.
+func (s *shim) shown(text string, after int) (int, error) {
 	if text == "" {
-		return nil
+		return after, nil
 	}
 	tail := strings.TrimSpace(text)
 	if i := strings.LastIndexByte(tail, '\n'); i >= 0 {
@@ -1319,22 +1394,44 @@ func (s *shim) shown(text string) error {
 		tail = string(r[len(r)-16:])
 	}
 	shownBy := time.After(shownWait(len(text)))
-shown:
 	for {
-		p := s.plain()
-		if strings.Contains(p, "Pasted text") || tail != "" && strings.Contains(strings.Join(strings.Fields(p), " "), strings.Join(strings.Fields(tail), " ")) {
-			break
+		if n, ok := s.textTaken(tail, after); ok {
+			return n, nil
 		}
 		select {
 		case <-s.changed:
 		case <-time.After(100 * time.Millisecond):
 		case <-shownBy:
-			break shown
+			return after, nil
 		case <-s.exited:
-			return fmt.Errorf("Claude Code ended (%v): %s", s.exit, s.lastScreen())
+			return 0, fmt.Errorf("Claude Code ended (%v): %s", s.exit, s.lastScreen())
 		}
 	}
-	return nil
+}
+
+// textTaken says whether the prompt shows pasted words taken: a "[Pasted
+// text #<n>" numbered past after, or the words' last, tail, drawn since
+// the paste or ending the prompt as the screen shows it (prompt). It is
+// the number shown, or after where the words show as themselves.
+func (s *shim) textTaken(tail string, after int) (int, bool) {
+	p := s.plain()
+	for _, m := range textShown.FindAllStringSubmatch(p, -1) {
+		if n, _ := strconv.Atoi(m[1]); n > after {
+			return n, true
+		}
+	}
+	words := strings.Join(strings.Fields(tail), " ")
+	if words != "" && strings.Contains(strings.Join(strings.Fields(p), " "), words) {
+		return after, true
+	}
+	on := s.prompt()
+	if n := lastMark(textLast, on); n > after {
+		return n, true
+	}
+	if words != "" && strings.HasSuffix(on, words) {
+		return after, true
+	}
+	return 0, false
 }
 
 // transcript is the session's transcript, "" before Claude Code writes it.

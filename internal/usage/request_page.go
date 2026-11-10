@@ -218,6 +218,9 @@ const rowCredits = 4096
 // counted no cache (#3464).
 const rowCacheUnknown = 8192
 
+// rowSocket is the Flags bit of Record.Socket.
+const rowSocket = 16384
+
 type rowChunk struct {
 	Archive   []byte
 	Locations []*time.Location
@@ -257,13 +260,13 @@ type rowChunk struct {
 // rowMsg is the Text of a row's Claude message id, after rowText's, and
 // rowError its error's
 const (
-	rowMsg   = 35
+	rowMsg   = 36
 	rowError = 9
 	// rowClient is the Text of the client's own name, when the user counts
 	// it as another agent (Row.Client, #1958)
 	rowClient = 33
 	// rowTexts is how many strings a row has: rowText's and the message id
-	rowTexts = 36
+	rowTexts = 37
 )
 
 // rowVaried are the strings that differ call by call: the error, the
@@ -329,8 +332,8 @@ func (c *rowChunk) shape(t [rowTexts]uint32) uint32 {
 // reason ("Upstream stop reason", #1927) and the service tiers (#1784)
 // among them: a string left out comes back empty from the cache, in the
 // page and in /v1/magpie/usage/requests (TestRowTextHoldsEveryString)
-func rowText(r *Row) [35]*string {
-	return [35]*string{&r.Agent, &r.Provider, &r.Host, &r.SessionProvider, &r.SessionAccount, &r.Model, &r.Requested, &r.Served, &r.Effort, &r.Error, &r.ErrType, &r.RequestID, &r.Endpoint, &r.Session, &r.NativeSession, &r.Kind, &r.Source, &r.Via, &r.ProviderKeyID, &r.ProviderKeyName, &r.CallerKeyID, &r.CallerKeyName, &r.Archive, &r.Operation, &r.ProviderAccount, &r.ResponseID, &r.Upstream, &r.Subagent, &r.ParentAgent, &r.Stop, &r.TierAsked, &r.TierSent, &r.TierServed, &r.Client, &r.CallerIssuerID}
+func rowText(r *Row) [36]*string {
+	return [36]*string{&r.Agent, &r.Provider, &r.Host, &r.SessionProvider, &r.SessionAccount, &r.Model, &r.Requested, &r.Served, &r.Effort, &r.Error, &r.ErrType, &r.RequestID, &r.Endpoint, &r.Session, &r.NativeSession, &r.Kind, &r.Source, &r.Via, &r.ProviderKeyID, &r.ProviderKeyName, &r.CallerKeyID, &r.CallerKeyName, &r.Archive, &r.Operation, &r.ProviderAccount, &r.ResponseID, &r.Upstream, &r.Subagent, &r.ParentAgent, &r.Stop, &r.TierAsked, &r.TierSent, &r.TierServed, &r.Client, &r.CallerIssuerID, &r.ClientIP}
 }
 func (c *rowChunk) add(r Row, msg string, order int64, failed bool) {
 	if c.dict == nil {
@@ -375,6 +378,9 @@ func (c *rowChunk) add(r Row, msg string, order int64, failed bool) {
 	}
 	if r.CacheUnknown {
 		p.Flags |= rowCacheUnknown
+	}
+	if r.Socket {
+		p.Flags |= rowSocket
 	}
 	if failed {
 		p.Flags |= 16
@@ -425,7 +431,7 @@ func smallOf(n int) int16 {
 
 func (c *rowChunk) row(i int) Row {
 	p := &c.Rows[i]
-	r := Row{Record: Record{RouteID: p.RouteID, Time: p.Time(), Input: int(p.Tokens[0]), Output: int(p.Tokens[1]), CacheRead: int(p.Tokens[2]), CacheWrite: int(p.Tokens[3]), CacheWrite1h: int(p.Tokens[5]), Reasoning: int(p.Tokens[4]), Millis: int64(p.Millis), TTFT: int64(p.TTFT), FirstText: int64(p.FirstText), FirstReasoning: int64(p.FirstReasoning), ReasoningHidden: p.Flags&rowReasoningHidden != 0, CacheUnknown: p.Flags&rowCacheUnknown != 0, Sent: int64(p.Sent), Flow: int64(p.Flow), Own: int64(p.Own), Masking: int64(p.Masking), Retried: int64(p.Retried), Queued: int64(p.Queued), Status: int(p.Status), Tries: int(p.Tries), UpBytes: int(p.UpBytes), DownBytes: int(p.DownBytes), ImageFilesSaved: int(p.FilesSaved), ImageFiles: int(p.ImageFiles), HandedOn: p.Flags&rowHandedOn != 0, Rejected: p.Flags&4 != 0, SessionOfficialLogin: p.Flags&8 != 0}, Cost: p.Cost, Priced: p.Flags&1 != 0, Swapped: p.Flags&2 != 0, Routed: p.Flags&32 != 0}
+	r := Row{Record: Record{RouteID: p.RouteID, Time: p.Time(), Input: int(p.Tokens[0]), Output: int(p.Tokens[1]), CacheRead: int(p.Tokens[2]), CacheWrite: int(p.Tokens[3]), CacheWrite1h: int(p.Tokens[5]), Reasoning: int(p.Tokens[4]), Millis: int64(p.Millis), TTFT: int64(p.TTFT), FirstText: int64(p.FirstText), FirstReasoning: int64(p.FirstReasoning), ReasoningHidden: p.Flags&rowReasoningHidden != 0, CacheUnknown: p.Flags&rowCacheUnknown != 0, Socket: p.Flags&rowSocket != 0, Sent: int64(p.Sent), Flow: int64(p.Flow), Own: int64(p.Own), Masking: int64(p.Masking), Retried: int64(p.Retried), Queued: int64(p.Queued), Status: int(p.Status), Tries: int(p.Tries), UpBytes: int(p.UpBytes), DownBytes: int(p.DownBytes), ImageFilesSaved: int(p.FilesSaved), ImageFiles: int(p.ImageFiles), HandedOn: p.Flags&rowHandedOn != 0, Rejected: p.Flags&4 != 0, SessionOfficialLogin: p.Flags&8 != 0}, Cost: p.Cost, Priced: p.Flags&1 != 0, Swapped: p.Flags&2 != 0, Routed: p.Flags&32 != 0}
 	if p.Flags&rowCredits != 0 {
 		credits := p.Credits
 		r.Credits = &credits
@@ -796,6 +802,20 @@ func statKey(path string) string {
 	}
 	return fmt.Sprintf("%s:%d:%d", path, s.Size(), s.ModTime().UnixNano())
 }
+
+// liveListKey names a provider's fetched model list by what it holds
+// (catalog.LiveKey), not its mtime: the list is saved again, unchanged
+// but for its fetch time, on every start and every 45 minutes, and each
+// save dropped every chunk and summary built on it. A list that can't be
+// read is named by its stat, as before.
+func liveListKey(id string) string {
+	p := catalog.LivePath(id)
+	if k, ok := catalog.LiveKey(id); ok {
+		return p + ":" + k
+	}
+	return statKey(p)
+}
+
 func recordHash(path string, n int64) string {
 	f, e := os.Open(path)
 	if e != nil {
@@ -844,7 +864,7 @@ func readRequestState(now time.Time) requestState {
 	h := sha256.New()
 	for _, current := range provider.All() {
 		fmt.Fprintf(h, "%q:%q:%v:%t:%t:%t;", current.ID, current.Where(), current.Catalogs(), current.IsPlugin(), current.Account == nil, current.Key != "")
-		fmt.Fprint(h, statKey(catalog.LivePath(current.ID)))
+		fmt.Fprint(h, liveListKey(current.ID))
 	}
 	for _, root := range sessions.DesktopDataDirs() {
 		for _, kind := range []string{"local-agent-mode-sessions", "claude-code-sessions"} {
@@ -854,7 +874,7 @@ func readRequestState(now time.Time) requestState {
 			}
 		}
 	}
-	meta += fmt.Sprintf("|%x|%s", h.Sum(nil), statKey(catalog.LivePath("antigravity")))
+	meta += fmt.Sprintf("|%x|%s", h.Sum(nil), liveListKey("antigravity"))
 	h.Reset()
 	snapshot := readLogSnapshot()
 	fmt.Fprint(h, meta, snapshot.version, now.In(time.Local).Format("2006-01-02 MST"))
@@ -1585,7 +1605,7 @@ func visibleLocal(chunks []*rowChunk) refSet {
 	// a message id seen is kept as two 64-bit hashes of it, not a copy of
 	// the decoded chunk's string: a long history's ~400k ids held ~7MB of
 	// copies at the start's peak, and a key of these is a string header's
-	// size. Two ids alike in both are ~1e-28 likely.
+	// size (msgKey).
 	// made to size, as many as the rows that can have an id (a Codex call
 	// has none): grown an id at a time, it was ~250 MB of a minute and a
 	// third of polls (#2278)
@@ -1615,10 +1635,10 @@ func visibleLocal(chunks []*rowChunk) refSet {
 			k = &read
 		}
 		for _, k := range k.keys {
-			if _, ok := seen.ids[k.k]; ok {
+			if _, ok := seen.ids[k.id()]; ok {
 				duplicates.add(rowRef{c, int(k.at)})
 			} else {
-				seen.ids[k.k] = struct{}{}
+				seen.ids[k.id()] = struct{}{}
 			}
 		}
 	}
@@ -1658,10 +1678,16 @@ type chunkMsgKeys struct {
 	turn uint64
 }
 
+// msgKey is 16 bytes: a hash of 64 bits and one of 32, ~1e-18 likely
+// alike for two of the ~300k ids a long history has, where a second 64
+// made it 24 with the row (#2278)
 type msgKey struct {
-	k  [2]uint64
+	k  uint64
+	k2 uint32
 	at int32
 }
+
+func (k msgKey) id() [2]uint64 { return [2]uint64{k.k, uint64(k.k2)} }
 
 // msgKeysOpening, in tests, is told each chunk msgKeysOf decodes.
 var msgKeysOpening func(*rowChunk)
@@ -1725,7 +1751,7 @@ func appendMsgKeys(keys []msgKey, open *rowChunk) []msgKey {
 		if msg == "" {
 			continue
 		}
-		keys = append(keys, msgKey{[2]uint64{maphash.String(msgSeeds[0], msg), maphash.String(msgSeeds[1], msg)}, int32(j)})
+		keys = append(keys, msgKey{maphash.String(msgSeeds[0], msg), uint32(maphash.String(msgSeeds[1], msg)), int32(j)})
 	}
 	return keys
 }

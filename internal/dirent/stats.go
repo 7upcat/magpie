@@ -10,12 +10,17 @@ import (
 
 // Stat is what a folder's listing says of one entry: its kind (Mode's type
 // bits, 0 for a regular file), and a regular file's size and modification
-// time, as os.Lstat gives them.
+// time, as os.Lstat gives them. Mod is unix nanoseconds, not a time.Time:
+// what is kept of a history's listings is ~130k entries, and its 24 bytes
+// made an entry 56 bytes where it is now 40 (#2278).
 type Stat struct {
-	Mode fs.FileMode
 	Size int64
-	Mod  time.Time
+	Mod  int64
+	Mode fs.FileMode
 }
+
+// ModTime is Mod as a time, as os.Lstat's ModTime has it.
+func (s Stat) ModTime() time.Time { return time.Unix(0, s.Mod) }
 
 // Entry is one entry of a Listing.
 type Entry struct {
@@ -49,7 +54,7 @@ func Stats(dir string) (Listing, bool) {
 	l, ok := stats(dir, room, old)
 	if old != nil {
 		listings.Lock()
-		keepRoom(old)
+		keepSpare(dir, old)
 		listings.Unlock()
 	}
 	if !ok {
@@ -74,6 +79,7 @@ func Stats(dir string) (Listing, bool) {
 var listings struct {
 	sync.Mutex
 	last    map[string]Listing // a folder's last listing
+	spare   map[string]Listing // the one before it, cleared: room for its next
 	room    []Listing          // cleared
 	entries int                // the room of those kept
 }
@@ -88,6 +94,11 @@ func taken(dir string) (old, room Listing) {
 	if old = listings.last[dir]; old != nil {
 		delete(listings.last, dir)
 		listings.entries -= cap(old)
+	}
+	if room = listings.spare[dir]; room != nil {
+		delete(listings.spare, dir)
+		listings.entries -= cap(room)
+		return old, room
 	}
 	n := len(listings.room)
 	if n == 0 {
@@ -106,6 +117,26 @@ func taken(dir string) (old, room Listing) {
 	listings.room = listings.room[:n-1]
 	listings.entries -= cap(room)
 	return old, room
+}
+
+// keepSpare keeps l, dir's listing before the one just read, cleared, as
+// room for dir's next: the few rooms shared by every folder went from a
+// small folder to a large one and were grown again, ~2 MB a poll (#2278).
+// listings is held.
+func keepSpare(dir string, l Listing) {
+	clear(l[:cap(l)])
+	if listings.entries+cap(l) > keptEntries {
+		return
+	}
+	if prev := listings.spare[dir]; prev != nil { // read twice at once
+		listings.entries -= cap(prev)
+		keepRoom(prev)
+	}
+	if listings.spare == nil {
+		listings.spare = map[string]Listing{}
+	}
+	listings.spare[dir] = l[:0]
+	listings.entries += cap(l)
 }
 
 // keepRoom keeps l, cleared, as room for a next listing, while the kept

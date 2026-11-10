@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/appdir"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/proc"
 )
 
@@ -226,8 +226,8 @@ func registeredExeDir(v string) string {
 }
 
 var (
-	plistIDRe      = regexp.MustCompile(`<key>CFBundleIdentifier</key>\s*<string>([^<]+)</string>`)
-	plistVersionRe = regexp.MustCompile(`<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>`)
+	plistIDRe      = lazyre.New(`<key>CFBundleIdentifier</key>\s*<string>([^<]+)</string>`)
+	plistVersionRe = lazyre.New(`<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>`)
 )
 
 // macBundle reports whether app's bundle is in one of appFolders, under one
@@ -256,11 +256,10 @@ type plistInfo struct {
 // to tell two writes apart is read again (racyDir).
 func bundleInfo(bundle string) (plistInfo, bool) {
 	p := filepath.Join(bundle, "Contents", "Info.plist")
-	st, err := os.Stat(p)
-	if err != nil {
+	mod, size, ok := statStamp(p)
+	if !ok {
 		return plistInfo{}, false
 	}
-	mod, size := st.ModTime(), st.Size()
 	plists.Lock()
 	k, ok := plists.m[p]
 	plists.Unlock()
@@ -341,11 +340,10 @@ func inAppFolders(dirs []string, names ...string) []string {
 // it. A time too recent to tell two changes apart is not trusted, as git
 // treats a racily clean index.
 func folderSubs(dir string) []string {
-	st, err := os.Stat(dir)
-	if err != nil {
+	mod, _, ok := statStamp(dir)
+	if !ok {
 		return nil
 	}
-	mod := st.ModTime()
 	appSubs.Lock()
 	k, ok := appSubs.m[dir]
 	appSubs.Unlock()
@@ -493,7 +491,7 @@ func (app desktopApp) linuxDir() string {
 	return dir
 }
 
-var linuxPackageVersionRe = regexp.MustCompile(`"version"\s*:\s*"([^"]+)"`)
+var linuxPackageVersionRe = lazyre.New(`"version"\s*:\s*"([^"]+)"`)
 
 // linuxVersion is the version of the app's Linux package, from its
 // resources/linux-package-metadata.json ({"codexAppBrand":"chatgpt",

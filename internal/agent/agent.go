@@ -201,6 +201,11 @@ type Agent struct {
 	// its sign-in only as it opens, sends nothing on it till it is opened
 	// again (MasterYi on Discord).
 	AppOut func() bool
+	// AppOutOff reports the user has turned the takeover (AppOut) off:
+	// Codex's sign-in set to Always ChatGPT, or Codex not connected. The
+	// takeover ending so is the user's change, not the reset's, and the
+	// Codex app's app-server is restarted for it (CodexTakeoverOff).
+	AppOutOff func() bool
 	// HoldMatters reports Codex takes magpie's models beside a ChatGPT
 	// sign-in, so that magpie is its provider while the Codex app holds
 	// the account (out), or is that already: what the app holds is read
@@ -419,7 +424,7 @@ func (a *Agent) Detected() bool {
 	if a.Dir != "" && Taken(a.Dir) {
 		return false
 	}
-	if _, err := os.Stat(a.Path); err == nil && (a.pathOwn == nil || a.pathOwn()) {
+	if _, ok := statKind(a.Path); ok && (a.pathOwn == nil || a.pathOwn()) {
 		return true
 	}
 	if a.Dir != "" && !a.dirShared && agentDir(a.Dir) {
@@ -489,8 +494,8 @@ var leftover = map[string]bool{"logs": true, "log": true, "debug": true, "diagno
 // p, or one it is in, would be: nothing can be written under it.
 func Taken(p string) bool {
 	for d := filepath.Clean(p); ; {
-		if st, err := os.Stat(d); err == nil {
-			return !st.IsDir()
+		if dir, ok := statKind(d); ok {
+			return !dir
 		}
 		up := filepath.Dir(d)
 		if up == d {
@@ -627,9 +632,14 @@ func (a *Agent) OwnModels(cur map[string]string) bool {
 }
 
 // Detected returns the agents present on this machine, in display order.
-func Detected() []*Agent {
+func Detected() []*Agent { return DetectedIn(All()) }
+
+// DetectedIn is Detected among all, a list of All() the caller has built
+// already: a page that lists the agents and looks them up by name builds
+// All once, not once for each.
+func DetectedIn(all []*Agent) []*Agent {
 	var out []*Agent
-	for _, a := range All() {
+	for _, a := range all {
 		if a.Detected() {
 			out = append(out, a)
 		}

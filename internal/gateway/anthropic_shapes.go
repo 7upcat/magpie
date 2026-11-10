@@ -3,11 +3,11 @@ package gateway
 import (
 	"bytes"
 	"encoding/json"
-	"regexp"
 	"strings"
 
 	"github.com/tidwall/gjson"
 
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -42,7 +42,9 @@ import (
 // Copilot's Messages API turns away auto mode's `safeguards` (automode.go)
 // on its Claude models: 400 "safeguards: Extra inputs are not permitted"
 // (#1756, claude-opus-5.5). A provider that refuses it is sent none, and
-// Claude Code, finding no safeguard_results, reviews its actions locally.
+// Claude Code, finding no safeguard_results, reviews its actions locally
+// or, where Anthropic has turned its local classifier off, asks for
+// approval (automode.go).
 //
 // Claude Code's deferred tools (ToolSearch, MCP tools that come and go)
 // put blocks of their own in a message: {"type":"tool_addition","tool":
@@ -84,13 +86,13 @@ const (
 )
 
 var (
-	displayValueRefused = regexp.MustCompile(`thinking\.(?:adaptive|enabled)\.display:? Input should be`)
-	displayRefused      = regexp.MustCompile(`thinking\.(?:adaptive|enabled)\.display:? Extra inputs are not permitted`)
-	turnEffortRefused   = regexp.MustCompile(`messages\.\d+\.output_config:? Extra inputs are not permitted|Mid-conversation reasoning effort \(configuration_update\) is not supported`)
-	turnRoleRefused     = regexp.MustCompile(`messages\.(\d+)\.role\b`)
-	safeguardsRefused   = regexp.MustCompile(`\bsafeguards:? Extra inputs are not permitted`)
-	deferredRefused     = regexp.MustCompile("messages\\[\\d+\\]\\.content: unknown variant `(?:tool_addition|tool_removal|tool_definition|tool_reference)`")
-	refsOnlyRefused     = regexp.MustCompile("missing field `content`")
+	displayValueRefused = lazyre.New(`thinking\.(?:adaptive|enabled)\.display:? Input should be`)
+	displayRefused      = lazyre.New(`thinking\.(?:adaptive|enabled)\.display:? Extra inputs are not permitted`)
+	turnEffortRefused   = lazyre.New(`messages\.\d+\.output_config:? Extra inputs are not permitted|Mid-conversation reasoning effort \(configuration_update\) is not supported`)
+	turnRoleRefused     = lazyre.New(`messages\.(\d+)\.role\b`)
+	safeguardsRefused   = lazyre.New(`\bsafeguards:? Extra inputs are not permitted`)
+	deferredRefused     = lazyre.New("messages\\[\\d+\\]\\.content: unknown variant `(?:tool_addition|tool_removal|tool_definition|tool_reference)`")
+	refsOnlyRefused     = lazyre.New("missing field `content`")
 )
 
 // knownDisplay is a thinking.display every Anthropic endpoint has taken.

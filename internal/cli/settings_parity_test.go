@@ -93,11 +93,67 @@ func TestSettingsCLISetsWhatTheWindowSaves(t *testing.T) {
 			t.Errorf("the window saves %q, which `magpie settings` can't set: add it to settingsapi.Keys", k)
 		}
 	}
+	pages := pagesSource(t)
+	for k, own := range ownRoute {
+		if !settingsapi.Known(k) {
+			t.Errorf("ownRoute names %q, which `magpie settings` can't set: take it out", k)
+		}
+		saved := false
+		for rest := pages; ; {
+			i := strings.Index(rest, own.call)
+			if i < 0 {
+				break
+			}
+			rest = rest[i+len(own.call):]
+			j := strings.Index(rest, "{")
+			if j < 0 {
+				break
+			}
+			body := rest[j:]
+			if regexp.MustCompile(`[{,]\s*` + own.field + `\s*:`).MatchString(body[:balanced(body)]) {
+				saved = true
+				break
+			}
+		}
+		if !saved {
+			t.Errorf("no page sends %q as %s to %s any more: send it in a save of POST /api/settings, or name the call that saves it", k, own.field, own.call)
+		}
+	}
 	for _, k := range settingsapi.Keys {
-		if !slices.Contains(gui, k) {
+		if _, own := ownRoute[k]; !own && !slices.Contains(gui, k) {
 			t.Errorf("`magpie settings` sets %q, which no page sends", k)
 		}
 	}
+}
+
+// ownRoute are the settings `magpie settings` sets that a page saves
+// through a route of its own instead of POST /api/settings, with the call
+// that does it: the Routing groups page's defaults for every group
+// (settings.SetGroupDefaults), which `magpie settings set` sets too. field
+// is the key the call's body sends it as.
+var ownRoute = map[string]struct{ call, field string }{
+	"groupSink":       {`api("groups/defaults"`, "sink"},
+	"groupFirstToken": {`api("groups/defaults"`, "firstToken"},
+	"groupPatience":   {`api("groups/defaults"`, "patience"},
+}
+
+// pagesSource is every page script the window serves, the built-in
+// plugins' among them, as one text.
+func pagesSource(t *testing.T) string {
+	t.Helper()
+	var all strings.Builder
+	err := filepath.WalkDir(filepath.Join("..", "gui", "assets"), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".js") || strings.Contains(p, "vendor") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		all.Write(b)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return all.String()
 }
 
 // What a route without a command is waiting for. Later stages of #4745
@@ -139,6 +195,8 @@ var cliForRoute = map[string]string{
 	"POST /api/davsync/{action}":           "magpie webdav",
 	"GET /api/caller-keys":                 "magpie gateway-key list",
 	"POST /api/caller-keys/{action}":       "magpie gateway-key",
+	"GET /api/account-groups":              "magpie gateway-key groups",
+	"POST /api/account-groups/{action}":    "magpie gateway-key groups",
 	"GET /api/groups":                      "magpie groups",
 	"POST /api/groups/{action}":            "magpie group",
 	"GET /api/import/{id}":                 "magpie import",
@@ -207,6 +265,7 @@ var notYet = map[string]string{
 	"POST /api/settings/codex-titles":            S2, // api.go
 	"POST /api/settings/codex-warm-at":           S2, // api.go
 	"POST /api/settings/cors":                    S2, // api.go
+	"POST /api/settings/desktop-isolated":        A,  // api.go; `magpie claude-desktop launcher`, an agent's form this check can't read
 	"POST /api/settings/desktop-longest":         S2, // api.go
 	"POST /api/settings/disabled-models":         S2, // api.go
 	"POST /api/settings/full-context":            S2, // api.go
@@ -260,6 +319,7 @@ var notYet = map[string]string{
 	"GET /api/context":                           U,  // context.go
 	"GET /api/context/text":                      W,  // context.go
 	"GET /api/context/reply":                     W,  // context_archive.go: the reply half of the same detail view
+	"GET /api/context/session":                   W,  // context.go: a session's context, request by request, in its detail view
 	"GET /api/dev/wait":                          W,  // dev_on.go
 	"POST /api/dev/import":                       W,  // dev_on.go
 	"GET /api/fonts":                             W,  // fonts.go
@@ -276,21 +336,28 @@ var notYet = map[string]string{
 	"GET /api/masking/sent":                      U,  // masking.go
 	"GET /api/masking/summary":                   U,  // masking.go
 	"GET /api/masking/value":                     U,  // masking.go
+	"POST /api/masking/allow":                    S2, // masking.go
 	"POST /api/masking/clear":                    U,  // masking.go
 	"POST /api/masking/preview":                  U,  // masking.go
 	"POST /api/masking/values":                   U,  // masking.go
+	"GET /api/library/bili":                      L,  // library.go
 	"GET /api/library/icon":                      W,  // library.go
 	"GET /api/library/market/servers":            L,  // library.go
 	"GET /api/library/market/skills":             L,  // library.go
 	"GET /api/library/mcp-signin/{id}":           L,  // library.go
+	"GET /api/library/pi":                        L,  // library.go
 	"GET /api/library/rtk":                       L,  // library.go
 	"GET /api/library/skill":                     L,  // library.go
+	"POST /api/library/bili":                     L,  // library.go
+	"POST /api/library/bili/install":             L,  // library.go
 	"POST /api/library/market/about":             L,  // library.go
 	"POST /api/library/mcp-signin":               L,  // library.go
 	"POST /api/library/mcp-signin/{id}/cancel":   L,  // library.go
 	"POST /api/library/mcp-signout":              L,  // library.go
 	"POST /api/library/mcp/check":                L,  // library.go
 	"POST /api/library/mcp/config":               L,  // library.go
+	"POST /api/library/pi":                       L,  // library.go
+	"POST /api/library/pi/copy":                  L,  // library.go
 	"POST /api/library/projects/choose":          W,  // library.go
 	"POST /api/library/reveal":                   W,  // library.go
 	"POST /api/library/rtk":                      L,  // library.go
@@ -299,11 +366,22 @@ var notYet = map[string]string{
 	"POST /api/library/rtk/upgrade":              L,  // library.go
 	"POST /api/library/skills/check":             L,  // library.go
 	"POST /api/library/skills/probe":             L,  // library.go
+	"GET /api/memory":                            L,  // memory.go
+	"POST /api/memory":                           L,  // memory.go
+	"POST /api/memory/digest":                    L,  // memory.go
+	"POST /api/memory/remove":                    L,  // memory.go
+	"GET /api/memory/distill":                    L,  // memory_distill.go
+	"POST /api/memory/distill":                   L,  // memory_distill.go
+	"POST /api/memory/distill/run":               L,  // memory_distill.go
+	"POST /api/memory/dream":                     L,  // memory_distill.go
+	"POST /api/memory/dream/run":                 L,  // memory_distill.go
+	"POST /api/memory/dream/undo":                L,  // memory_distill.go
 	"POST /api/library/skills/regroup":           W,  // library.go
 	"GET /api/omarchy/widget":                    W,  // omarchy.go
 	"POST /api/omarchy/widget":                   W,  // omarchy.go
 	"GET /api/plugin-pages":                      W,  // pluginpage.go
 	"GET /api/plugin-panels":                     W,  // pluginpage.go
+	"POST /api/plugin-pages/image":               W,  // pageimage.go
 	"POST /api/plugin-pages/options":             W,  // pluginpage.go
 	"POST /api/plugin-pages/read":                W,  // pluginpage.go
 	"GET /api/plugins/agents":                    P,  // plugins.go
@@ -382,6 +460,7 @@ var notYet = map[string]string{
 	"GET /api/usage/quotas/history/holds":        U,  // usage.go
 	"GET /api/usage/requests":                    U,  // usage.go
 	"GET /api/usage/requests/content":            U,  // usage.go
+	"GET /api/usage/traffic":                     U,  // usage.go: the live rate
 	"POST /api/usage/checkin-account":            U,  // usage.go: one account now; `magpie accounts checkin` does every account
 	"POST /api/usage/clear":                      U,  // usage.go
 	"POST /api/usage/codex-reset":                U,  // usage.go

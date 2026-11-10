@@ -64,6 +64,12 @@ type modelJSON struct {
 	Same  string   `json:"same,omitempty"`  // the model the user said it is the same as, for the groups magpie finds (#583)
 	Merge string   `json:"merge,omitempty"` // what those groups merge it by when the user says nothing
 	Kind  string   `json:"kind,omitempty"`  // what the user said it makes: image or video (#1399)
+	// Headers are the request headers the user gave the model, sent after
+	// the provider's (provider.SetModelHeaders)
+	Headers map[string]string `json:"headers,omitempty"`
+	// System is the system prompt the user gave the model, added after the
+	// agent's own (provider.SetModelSystemPrompt)
+	System string `json:"system,omitempty"`
 	// Vendor is the provider's own id of a model the user lists by
 	// another (provider.SetModelID), "" for one listed by its own; IDs
 	// says the provider's models can be given ids at all (a key's)
@@ -82,6 +88,10 @@ type modelJSON struct {
 	// RemoteList says the list price is what the other magpie counts the
 	// model at, as its list told (a Remote magpie's), not models.dev's
 	RemoteList bool `json:"remoteList,omitempty"`
+	// ListedOutput is its reply limit before the user's Max output: its
+	// vendor's list's, else models.dev's, within Listed; Model settings'
+	// Max output shows it when none is set (sayagoodbyeplz on Discord)
+	ListedOutput int `json:"listedOutput,omitempty"`
 }
 
 type providerJSON struct {
@@ -129,6 +139,11 @@ type providerJSON struct {
 	// spoken HTTP/1.1 to, never HTTP/2 (provider.HTTP1); taken where
 	// TakesInsecureTLS is
 	HTTP1 bool `json:"http1"`
+	// its Responses turns over the Responses WebSocket (provider.Socket,
+	// #5781): auto, on or ""; TakesSocket: a provider of a key with a
+	// Responses URL
+	Socket      string `json:"socket"`
+	TakesSocket bool   `json:"takesSocket"`
 	// asked as usual after a quota refusal or a 429, never set aside for
 	// it (provider.LimitRestOff)
 	LimitRestOff bool `json:"limitRestOff"`
@@ -174,6 +189,9 @@ type providerJSON struct {
 	// one for that window apart, by the account and then the window's
 	// capId (provider.AccountWindowCaps); 100 is none on that window
 	AccountWindowCaps map[string]map[string]int `json:"accountWindowCaps,omitempty"`
+	// AccountWindowAmounts: a window capped at a fixed amount of its own
+	// unit in place of a share (provider.AccountWindowAmounts)
+	AccountWindowAmounts map[string]map[string]float64 `json:"accountWindowAmounts,omitempty"`
 	// the names the user gave its accounts, by the account in lower
 	// case (provider.AccountNames, #1515), and the name of the key plan
 	// each account was found to stand in for (provider.SeatNameOf): the
@@ -193,7 +211,23 @@ type providerJSON struct {
 	// Balance URL, and its field (provider.BalanceFound)
 	BalanceFound      string `json:"balanceFound,omitempty"`
 	BalanceFoundField string `json:"balanceFoundField,omitempty"`
-	ModelsURL         string `json:"modelsURL,omitempty"`
+	// its keys may have a balance typed by hand, their vendor telling
+	// none (provider.TakesOwnBalance)
+	TakesOwnBalance bool   `json:"takesOwnBalance,omitempty"`
+	ModelsURL       string `json:"modelsURL,omitempty"`
+	// its vendor's list is never asked for, and only the models added by
+	// id are served (provider.Provider.ListOff); TakesListOff: a key's
+	// provider, where it can be turned off
+	ListOff      bool `json:"listOff,omitempty"`
+	TakesListOff bool `json:"takesListOff,omitempty"`
+	// TakesModelHeaders: a key's provider, whose models can each be given
+	// headers of their own (provider.SetModelHeaders); a signed-in
+	// account's and a plugin's carry their sign-in's
+	TakesModelHeaders bool `json:"takesModelHeaders,omitempty"`
+	// DecideAPIKind: a provider whose models can each be asked on its
+	// System One URL once it has one beside a conversation URL
+	// (provider.DecideAPI); the editor offers System One then
+	DecideAPIKind bool `json:"decideAPIKind,omitempty"`
 	// an account-wide balance token (provider.BalanceToken): whether the
 	// vendor takes one, and whether one is saved; never the token itself
 	BalanceToken struct {
@@ -280,6 +314,9 @@ type providerJSON struct {
 	// LibraryMCP: a Remote magpie whose router is a Library server, or
 	// is to be one (library.RemoteMCPOn)
 	LibraryMCP bool `json:"libraryMCP,omitempty"`
+	// RemoteUpdate: a Remote magpie's word on its last ask to follow
+	// this magpie's version (remoteUpdateNote)
+	RemoteUpdate *remoteUpdateJSON `json:"remoteUpdate,omitempty"`
 	// CapStop and CapCareful: how its accounts end at their caps
 	// (plugins#349), set on their own with capstop and capcareful
 	CapStop    bool `json:"capStop,omitempty"`
@@ -440,8 +477,14 @@ type accountJSON struct {
 // of them again for it: with the owner's config 58 MB of the 1.4 GB a
 // magpie allocated over 20 window polls.
 func agentNamed(q string) (*agent.Agent, error) {
-	return agent.FindIn(provider.Held("agent.All", agent.All), q)
+	return agent.FindIn(heldAgents(), q)
 }
+
+// heldAgents is agent.All, built once while a request holds it: the
+// Providers page, the state and the drift each looked at a list of their
+// own beside the one accountLabel looks names up in, every agent built
+// again (~0.2 MB a poll with real accounts). Shared, so read only.
+func heldAgents() []*agent.Agent { return provider.Held("agent.All", agent.All) }
 
 // accountLabel is the name and logo an account is shown with: its agent's,
 // the subscription's for one no agent magpie configures, and a plugin's
@@ -549,6 +592,9 @@ type gatewayJSON struct {
 	// PublicURL is MAGPIE_PUBLIC_URL when it is among LANURLs: Connect
 	// starts there until the user picks an address (#1551)
 	PublicURL string `json:"publicURL,omitempty"`
+	// PublicKind is gateway.URLKind's of PublicURL, which Connect and
+	// the list above it name it by
+	PublicKind string `json:"publicKind,omitempty"`
 	// LANPublic are those of LANURLs at an internet address, which anyone
 	// online reaches, not only this network
 	LANPublic []string `json:"lanPublic,omitempty"`
@@ -559,6 +605,10 @@ type gatewayJSON struct {
 	// ContainerHost: where other containers on this host reach the
 	// gateway while magpie runs in one (gateway.ContainerHostURL)
 	ContainerHost string `json:"containerHost,omitempty"`
+	// LazyCat: a LazyCat app's domain, which only devices with LazyCat's
+	// client reach; LazyCatBox: the box's LAN addresses are listed too
+	LazyCat    string `json:"lazyCat,omitempty"`
+	LazyCatBox bool   `json:"lazyCatBox,omitempty"`
 	// OnNetwork: MAGPIE_ADDR puts it beyond loopback (a server, a Docker
 	// image), so every caller is shown a gateway key, and LAN is true too:
 	// callers from elsewhere, a container's host among them, need one
@@ -699,6 +749,27 @@ func agentUses(agents []*agent.Agent, findGroup func(string) (provider.Group, []
 	return out
 }
 
+// groupsOnce is find with each group's members found once: every agent
+// on a group, and the gateway's list after them, asked for the same
+// group's again, a Member over a kilobyte each (8 MB of forty polls of
+// the Providers page with real accounts). The page only reads them.
+func groupsOnce(find func(string) (provider.Group, []provider.Member, bool)) func(string) (provider.Group, []provider.Member, bool) {
+	type found struct {
+		g  provider.Group
+		ms []provider.Member
+		ok bool
+	}
+	seen := map[string]found{}
+	return func(id string) (provider.Group, []provider.Member, bool) {
+		if f, ok := seen[id]; ok {
+			return f.g, f.ms, f.ok
+		}
+		g, ms, ok := find(id)
+		seen[id] = found{g, ms, ok}
+		return g, ms, ok
+	}
+}
+
 // presetOwnClient says a provider added from pr goes as a client of its
 // vendor's own (provider.OwnClient): OpenCode's, Cline's, Kilo's, another
 // magpie.
@@ -739,7 +810,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		ID: p.ID, Name: p.Name, Icon: p.Icon, IconFrom: p.IconFrom, Preset: p.Preset, Host: p.Host(),
 		Chat: p.Chat, Responses: p.Responses, Anthropic: p.Anthropic, Gemini: p.Gemini, Decide: p.Decide, BaseAPI: p.BaseAPI, ModelTest: p.ModelTest(), TestsAs: p.TestClients(), DecideTest: p.AsksDecideModels(), MarksKinds: p.MarksKinds(),
 		Catalog: p.Catalog, Website: p.Website, KeysURL: p.KeysURL,
-		Proxy: p.Proxy, AccountProxies: p.AccountProxies, AccountModels: p.AccountModels, AccountCaps: p.AccountCaps, AccountWindowCaps: p.AccountWindowCaps, AccountNames: p.AccountNames, Headers: p.Headers, ExtraBody: p.ExtraBody, ReplyHeaders: p.ReplyHeaders, PassHeaders: p.PassHeaders, Searches: p.Searches, Cline: p.ClinePinnable(), PinUpstream: p.PinUpstream, Unredacted: p.Unredacted, CountFree: p.CountFree, InsecureTLS: p.InsecureTLS, TakesInsecureTLS: p.TakesInsecureTLS(), HTTP1: p.HTTP1, LimitRestOff: p.LimitRestOff, ImageFilesOff: p.ImageFilesOff, TakesImageFiles: p.TakesImageFiles(), NativeCompaction: p.NativeCompaction, CarriesCompaction: p.CarriesCompaction(), PassUserAgent: !p.MagpieUserAgent, OwnClient: p.OwnClient(), PassErrors: p.PassErrors, TakesPassErrors: p.TakesPassErrors(), AuthHeader: p.AuthHeader, BothAuth: p.BothAuth(), BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, BalanceMethod: p.BalanceMethod, ModelsURL: p.ModelsURL,
+		Proxy: p.Proxy, AccountProxies: p.AccountProxies, AccountModels: p.AccountModels, AccountCaps: p.AccountCaps, AccountWindowCaps: p.AccountWindowCaps, AccountWindowAmounts: p.AccountWindowAmounts, AccountNames: p.AccountNames, Headers: p.Headers, ExtraBody: p.ExtraBody, ReplyHeaders: p.ReplyHeaders, PassHeaders: p.PassHeaders, Searches: p.Searches, Cline: p.ClinePinnable(), PinUpstream: p.PinUpstream, Unredacted: p.Unredacted, CountFree: p.CountFree, InsecureTLS: p.InsecureTLS, TakesInsecureTLS: p.TakesInsecureTLS(), HTTP1: p.HTTP1, Socket: p.Socket, TakesSocket: p.TakesSocket(), LimitRestOff: p.LimitRestOff, ImageFilesOff: p.ImageFilesOff, TakesImageFiles: p.TakesImageFiles(), NativeCompaction: p.NativeCompaction, CarriesCompaction: p.CarriesCompaction(), PassUserAgent: !p.MagpieUserAgent, OwnClient: p.OwnClient(), PassErrors: p.PassErrors, TakesPassErrors: p.TakesPassErrors(), AuthHeader: p.AuthHeader, BothAuth: p.BothAuth(), BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, BalanceMethod: p.BalanceMethod, ModelsURL: p.ModelsURL, ListOff: p.ListsOff(), TakesListOff: p.Account == nil && !p.IsPlugin() && !p.DecideOnly(), TakesModelHeaders: p.Account == nil, DecideAPIKind: p.DecideAPIKind(),
 		Ready: p.Ready(), Chosen: p.PicksOf(avail), Agents: make([]providerAgent, 0, len(agents)),
 		Fallback: p.Fallback, Routing: p.Routing, Sink: p.Sink, UseFirst: p.UseFirst, Affinity: p.Affinity, KeepLogin: p.KeepLogin, KeepLoginAs: p.KeepLoginAs, SwitchOnly: p.SwitchOnly, RestartApp: p.RestartApp, Self: p.SelfAnswered(), KeepSelf: p.KeepSelf, CapStop: p.CapStop, CapCareful: p.CapCareful, Unlisted: p.Unlisted, NoModels: p.ServesNone(), BestInFamily: p.BestInFamily && len(p.Models) == 0 && !p.NoModels, Off: p.Off, Contexts: p.Contexts,
 		MaxConcurrency: p.MaxConcurrency, PluginConcurrency: p.PluginConcurrency(), MaxAccounts: p.MaxAccounts, PluginAccounts: p.PluginAtOnce(), PriceRate: p.PriceRate,
@@ -853,6 +924,14 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		}
 		out.KeyList[i].Spend = ks
 	}
+	// and one with a balance typed, what is left of it (the card on the
+	// Usage page shows the same, provider.ownBalanceCard)
+	out.TakesOwnBalance = p.TakesOwnBalance()
+	for i, k := range out.KeyList {
+		if e, ok := p.OwnBalanceEstimate(k.ID); ok {
+			out.KeyList[i].Balance = &e
+		}
+	}
 	if !out.Key.Set && p.Ready() {
 		out.Key.Optional = true
 	}
@@ -916,6 +995,9 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 	// Discord, Windows)
 	set := held
 	noAPI := p.NoAPI()
+	// the provider's catalogs worked out once, and each model priced once
+	// for its list price and whether it is free
+	pricer := p.Pricer()
 	// each model's provider/model ref, made once: the settings' maps and
 	// every agent's hidden list are looked up by it
 	var refs []string
@@ -932,8 +1014,9 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 			images = said
 		}
 		window := p.WindowOf(m)
-		j := modelJSON{ID: m.ID, Name: m.Name, Efforts: provider.EffortsOf(m), On: on, Context: window, Output: provider.OutputWithin(window, p.ReplyLimitIn(m, set)), Listed: provider.ListedWindow(m), Max: m.MaxContext, Free: m.Free, Rate: m.Rate, RateWas: m.RateWas, Images: images, ImageSet: imageSet, Own: own, Best: newest[m.ID]}
-		j.Zero = !m.Free && p.PricedFree(set, m.ID)
+		j := modelJSON{ID: m.ID, Name: m.Name, Efforts: provider.EffortsOf(m), On: on, Context: window, Output: provider.OutputWithin(window, p.ReplyLimitIn(m, set)), Listed: provider.ListedWindow(m), ListedOutput: provider.OutputWithin(provider.ListedWindow(m), p.ReplyLimitIn(m, settings.Settings{})), Max: m.MaxContext, Free: m.Free, Rate: m.Rate, RateWas: m.RateWas, Images: images, ImageSet: imageSet, Own: own, Best: newest[m.ID]}
+		list, listed, free := pricer.Prices(set, m.ID)
+		j.Zero = !m.Free && free
 		// a plugin reports a model's load by its own id, not one the user
 		// lists it by (axelburks on Discord)
 		ownID := p.OwnModelID(m.ID)
@@ -964,6 +1047,10 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		}
 		j.IDs = p.TakesModelIDs()
 		j.Kind = p.ModelKind(m.ID)
+		if p.Account == nil {
+			j.Headers = held.ModelHeaders[ref]
+		}
+		j.System = held.ModelSystemPrompts[ref]
 		j.Merge = provider.MergeName(m.ID)
 		j.Desktop = desktop[ref]
 		if mp, ok := held.ModelPrices[ref]; ok {
@@ -971,8 +1058,8 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 				j.Price = &pr
 			}
 		}
-		if pr, ok := p.ListPrice(m.ID); ok {
-			j.List, j.RemoteList = &pr, p.RemotePriced(m.ID)
+		if listed {
+			j.List, j.RemoteList = &list, p.RemotePriced(m.ID)
 		} else if pr, ok := provider.MakerPrice(m.ID); ok {
 			j.List = &pr
 		}
@@ -1020,7 +1107,19 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 	}
 	// picks the vendor list does not know go first, so they are visible,
 	// the last one picked foremost
+	// counted first: a catalog.Model is large, and growing the list by
+	// append for a provider whose picks the vendor list lacks was 6 MB of
+	// what forty polls of the Providers page allocated with real accounts
+	nFront := 0
+	for _, m := range exposedList {
+		if !seen[m.ID] {
+			nFront++
+		}
+	}
 	var front []catalog.Model
+	if nFront > 0 {
+		front = make([]catalog.Model, 0, nFront)
+	}
 	for _, m := range exposedList {
 		if !seen[m.ID] {
 			front = append(front, m)
@@ -1056,7 +1155,7 @@ func providerInfoWith(p provider.Provider, ls provider.Listing, agents []agentUs
 		}
 	}
 	// its image models aren't among those agents chat with; the editor
-	// lists them apart, as Settings → Images is where one is picked
+	// lists them apart, as Settings → Models → Images is where one is picked
 	for _, m := range gateway.DrawersOf(p, func() []catalog.Model { return ls.Available }) {
 		out.DrawIDs = append(out.DrawIDs, m.ID)
 		if m.Name != "" && m.Name != m.ID {
@@ -1137,7 +1236,7 @@ func providersState() providersJSON {
 	// models, not magpie's own list of them (#204): asked behind the page,
 	// which is told so and asks again, never waited for (#541)
 	provider.FetchNewBehind(8 * time.Second)
-	agents := agent.Detected()
+	agents := agent.DetectedIn(heldAgents())
 	s := providersJSON{Providers: []providerJSON{}, Presets: []presetJSON{}, Excluded: []excludedJSON{}}
 	s.OnPlugins = provider.OnPlugins()
 	s.Movable = provider.MovableIDs()
@@ -1177,12 +1276,18 @@ func providersState() providersJSON {
 		}
 		s.Excluded = append(s.Excluded, e)
 	}
-	findGroup := provider.GroupFinder()
+	findGroup := groupsOnce(provider.GroupFinder())
 	uses := agentUses(agents, findGroup)
 	desktop := desktopNumbers(uses)
 	have := map[string]bool{}
 	var remoteMCP map[string]bool // read once, at the first Remote magpie
-	for _, p := range provider.All() {
+	all := provider.All()
+	// both lists made once at their size: each grown by append was 6 MB of
+	// what forty polls of the Providers page allocated with real accounts
+	s.Providers = make([]providerJSON, 0, len(all))
+	partners, presets := provider.Partners(), provider.Presets()
+	s.Presets = make([]presetJSON, 0, len(partners)+len(presets))
+	for _, p := range all {
 		// a preset is added once any provider is its, whatever its id
 		have[p.ID], have[p.Preset] = true, true
 		info := providerInfoWith(p, provider.KeptListing(p), uses, desktop)
@@ -1191,28 +1296,30 @@ func providersState() providersJSON {
 				remoteMCP = library.RemoteMCPOn()
 			}
 			info.LibraryMCP = remoteMCP[p.ID]
+			info.RemoteUpdate = remoteUpdateNote(p.ID, time.Now())
 		}
 		s.Providers = append(s.Providers, info)
 	}
 	// partners first, as the add sheet lists them
-	for _, pa := range provider.Partners() {
+	for _, pa := range partners {
 		s.Presets = append(s.Presets, presetJSON{PresetDef: pa.PresetDef, Added: have[pa.ID], Notes: pa.Notes, Langs: pa.Langs, New: !have[pa.ID] && !provider.PartnerNoticed(pa.ID), OwnClient: presetOwnClient(pa.PresetDef)})
 	}
-	for _, pr := range provider.Presets() {
+	for _, pr := range presets {
 		bases := provider.Provider{Chat: pr.Chat, Responses: pr.Responses, Anthropic: pr.Anthropic}
 		team := provider.TakesZhipuTeam(bases)
 		vendor, keyRegions := presetAccessKey(pr)
 		s.Presets = append(s.Presets, presetJSON{PresetDef: pr, Added: have[pr.ID], ZhipuTeam: team, AccessKey: vendor != "", AccessKeyVendor: vendor, AccessKeyRegions: keyRegions, Vertex: pr.ID == provider.VertexPreset, OwnClient: presetOwnClient(pr)})
 	}
-	cat := provider.Catalog()
-	s.Gateway = gatewayJSON{URL: gateway.URL(), OnNetwork: gateway.OnNetwork(), Models: len(cat), Calls: []gateway.Call{}, Groups: []gwGroupJSON{}}
+	cat, models := provider.CatalogGroups()
+	s.Gateway = gatewayJSON{URL: gateway.URL(), OnNetwork: gateway.OnNetwork(), Models: models, Calls: []gateway.Call{}, Groups: []gwGroupJSON{}}
 	s.Gateway.LAN = settings.Load().LAN || s.Gateway.OnNetwork
 	if s.Gateway.LAN {
 		s.Gateway.LANURLs = gateway.LANURLs()
 		s.Gateway.LANPublic = gateway.PublicURLs(s.Gateway.LANURLs)
 		s.Gateway.Container, s.Gateway.ContainerHost = gateway.ContainerAddrs(), gateway.ContainerHostURL()
+		s.Gateway.LazyCat, s.Gateway.LazyCatBox = gateway.LazyCatURL(), gateway.LazyCatBox()
 		if u := gateway.PublicURL(); slices.Contains(s.Gateway.LANURLs, u) {
-			s.Gateway.PublicURL = u
+			s.Gateway.PublicURL, s.Gateway.PublicKind = u, gateway.URLKind(u)
 		}
 	}
 	for _, e := range cat {
@@ -1486,6 +1593,10 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// HTTP1 is whether its own hosts are spoken HTTP/1.1 to; a
 			// save that leaves it out keeps it
 			HTTP1 *bool `json:"http1"`
+			// Socket is how its Responses turns go over the Responses
+			// WebSocket (#5781): auto, on, or "" for HTTP alone; a save
+			// that leaves it out keeps it
+			Socket *string `json:"socket"`
 			// LimitRestOff is whether a quota refusal or a 429 leaves it
 			// asked as usual; a save that leaves it out keeps it
 			LimitRestOff *bool `json:"limitRestOff"`
@@ -1558,7 +1669,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// gives the vendor's answer back.
 			Images *bool `json:"images"`
 			// ModelPrefs, for save: the names, levels and images the
-			// editor's Names, prices & levels changed, by model id, made with the
+			// editor's Model settings changed, by model id, made with the
 			// rest of the Save and not a click at a time
 			ModelPrefs map[string]provider.ModelPref `json:"modelPrefs"`
 			// Outputs, for save: the reply limits the editor's Max output
@@ -1624,6 +1735,10 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// Windows, for windowcap, in place of Window: a family's
 			// windows, which the GUI shows as one meter
 			Windows []string `json:"windows"`
+			// Amount, for windowcap in place of Cap: a fixed amount of the
+			// window's own unit the account is used to at most, 0 to lift it
+			// (provider.AccountWindowAmounts)
+			Amount *float64 `json:"amount"`
 			// Weight, for accountweight: the account's share under By
 			// weight routing, 1 to provider.MaxKeyWeight (0 or 1: none)
 			Weight int `json:"weight"`
@@ -1631,6 +1746,20 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// (its id), in USD a day, a month or in all; none, or an
 			// amount of 0, takes it off
 			Spend *provider.SpendCap `json:"spend"`
+			// Balance, for keyownbalance: the balance typed for the key
+			// Account (its id), counted from now, in USD or, with Currency
+			// "cny", in yuan; none takes it off
+			Balance  *float64 `json:"balance"`
+			Currency string   `json:"currency"`
+			// Refill, for keybalancerefill: when the key's balance typed
+			// is whole again; none for never
+			Refill *provider.Refill `json:"refill"`
+			// Expiring, for keyexpiring: a grant of credit that expires
+			// on the key's balance typed, {amount, until}, added beside
+			// the others; with Remove, the grant {at} (or every one
+			// {until}) taken off; none takes every grant off
+			Expiring *provider.Expiring `json:"expiring"`
+			Remove   bool               `json:"remove"`
 			// Alias, for accountname: the account's name of the user's
 			// own, "" to take it off (#1515)
 			Alias string `json:"alias"`
@@ -1646,6 +1775,9 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// BestInFamily, for save: the editor's Best in family, kept
 			// with no model picked; a save that leaves it out keeps it
 			BestInFamily *bool `json:"bestInFamily"`
+			// ListOff, for save: Fetch the model list unticked; a save
+			// that leaves it out keeps it
+			ListOff *bool `json:"listOff"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			fail(rw, err)
@@ -1657,6 +1789,9 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		}
 		if req.BestInFamily != nil {
 			in.BestInFamily = *req.BestInFamily
+		}
+		if req.ListOff != nil {
+			in.ListOff = *req.ListOff
 		}
 		if req.Routing != nil {
 			in.Routing = *req.Routing
@@ -1753,6 +1888,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				pr.ZhipuTeam = in.ZhipuTeam
 				pr.NoModels = in.NoModels
 				pr.BestInFamily = in.BestInFamily
+				pr.ListOff = in.ListOff
 				pr.ExtraBody = in.ExtraBody
 				pr.ReplyHeaders = in.ReplyHeaders
 				pr.PassHeaders = in.PassHeaders
@@ -1891,6 +2027,9 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				if req.HTTP1 != nil {
 					in.HTTP1 = *req.HTTP1
 				}
+				if req.Socket != nil {
+					in.Socket, _ = provider.ParseSocket(*req.Socket)
+				}
 				if req.LimitRestOff != nil {
 					in.LimitRestOff = *req.LimitRestOff
 				}
@@ -1936,6 +2075,11 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 					in.HTTP1 = *req.HTTP1
 				} else if old != nil {
 					in.HTTP1 = old.HTTP1
+				}
+				if req.Socket != nil {
+					in.Socket, _ = provider.ParseSocket(*req.Socket)
+				} else if old != nil {
+					in.Socket = old.Socket
 				}
 				if req.LimitRestOff != nil {
 					in.LimitRestOff = *req.LimitRestOff
@@ -2032,11 +2176,12 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				// limits on requests at once, with accountconcurrency, and
 				// their weights, with accountweight
 				if old != nil {
-					in.AccountCaps, in.AccountWindowCaps = old.AccountCaps, old.AccountWindowCaps
+					in.AccountCaps, in.AccountWindowCaps, in.AccountWindowAmounts = old.AccountCaps, old.AccountWindowCaps, old.AccountWindowAmounts
 					in.AccountConcurrency = old.AccountConcurrency
 					in.AccountWeights = old.AccountWeights
-					in.AccountNames = old.AccountNames // with accountname
-					in.KeySpendCaps = old.KeySpendCaps // with keyspendcap
+					in.AccountNames = old.AccountNames     // with accountname
+					in.KeySpendCaps = old.KeySpendCaps     // with keyspendcap
+					in.KeyOwnBalances = old.KeyOwnBalances // with keyownbalance
 				}
 				// the image models unticked in its editor likewise: []
 				// shows them all (321sssrt on X)
@@ -2068,6 +2213,10 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				// and Best in family (normalize drops it under a pick)
 				if req.BestInFamily == nil && old != nil {
 					in.BestInFamily = old.BestInFamily
+				}
+				// and the list turned off
+				if req.ListOff == nil && old != nil {
+					in.ListOff = old.ListOff
 				}
 				// a Volcengine access key likewise: its ID kept when left
 				// out or sent blank (an editor opened before the key was
@@ -2305,7 +2454,12 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			if len(req.Windows) == 0 {
 				req.Windows = []string{req.Window}
 			}
-			if err := provider.SetWindowCaps(in.ID, req.Account, req.Windows, req.Cap); err != nil {
+			set := func() error { return provider.SetWindowCaps(in.ID, req.Account, req.Windows, req.Cap) }
+			if req.Amount != nil {
+				// a fixed amount of the window's unit, 0 to lift it
+				set = func() error { return provider.SetWindowAmount(in.ID, req.Account, req.Windows, *req.Amount) }
+			}
+			if err := set(); err != nil {
 				fail(rw, err)
 				return
 			}
@@ -2320,6 +2474,41 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				c = &provider.SpendCap{USD: req.Spend.USD, Period: req.Spend.Period}
 			}
 			if err := provider.SetKeySpendCap(in.ID, req.Account, c); err != nil {
+				fail(rw, err)
+				return
+			}
+		case "keyownbalance":
+			var b *provider.OwnBalance
+			switch {
+			case req.Balance == nil:
+			case req.Currency == "cny":
+				b = &provider.OwnBalance{CNY: req.Balance}
+			case req.Currency == "" || req.Currency == "usd":
+				b = &provider.OwnBalance{USD: *req.Balance}
+			default:
+				fail(rw, fmt.Errorf("a balance is in usd or cny, not %q", req.Currency))
+				return
+			}
+			if err := provider.SetKeyOwnBalance(in.ID, req.Account, b); err != nil {
+				fail(rw, err)
+				return
+			}
+		case "keybalancerefill":
+			if err := provider.SetKeyBalanceRefill(in.ID, req.Account, req.Refill); err != nil {
+				fail(rw, err)
+				return
+			}
+		case "keyexpiring":
+			var err error
+			switch {
+			case req.Expiring == nil:
+				err = provider.ClearKeyExpiring(in.ID, req.Account)
+			case req.Remove:
+				err = provider.RemoveKeyExpiring(in.ID, req.Account, *req.Expiring)
+			default:
+				err = provider.AddKeyExpiring(in.ID, req.Account, *req.Expiring)
+			}
+			if err != nil {
 				fail(rw, err)
 				return
 			}
@@ -2661,6 +2850,12 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			change = func() error { return provider.ForgetLogin(in.Agent, in.User) }
 		case "on", "off":
 			change = func() error { return provider.SetLoginOn(in.Agent, in.User, r.PathValue("action") == "on") }
+		case "access-only", "renewed":
+			// kept access token only, never renewed (EastonXvii on X), or
+			// renewed by magpie again
+			change = func() error {
+				return provider.SetLoginAccessOnly(in.Agent, in.User, r.PathValue("action") == "access-only")
+			}
 		default:
 			http.NotFound(rw, r)
 			return
@@ -2886,6 +3081,9 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		var in struct {
 			Agent string
 			Files []string
+			// ChatGPT accounts kept with the file's access token only,
+			// never renewed (EastonXvii on X)
+			AccessOnly bool
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 8<<20)).Decode(&in); err != nil {
 			fail(rw, err)
@@ -2898,6 +3096,11 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			// ChatGPT and Claude sign-ins: CLIProxyAPI's auth files, Codex
 			// CLI's auth.json, Claude Code's .credentials.json
 			imp = provider.ImportLogins
+			if in.AccessOnly && in.Agent == "codex" {
+				imp = func(ctx context.Context, _ string, files []string) ([]provider.ImportedAccount, error) {
+					return provider.ImportCodexAccessOnly(ctx, files)
+				}
+			}
 		} else if in.Agent == "factory" {
 			// Factory API keys (fk-…), as droid takes FACTORY_API_KEY (#506)
 			imp = func(ctx context.Context, _ string, files []string) ([]provider.ImportedAccount, error) {
@@ -2998,7 +3201,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		// and System Settings' Login Items, where Open at login is allowed
 		// again: that one pane, not System Settings' scheme at large
-		if strings.HasPrefix(in.URL, "https://") || strings.HasPrefix(in.URL, "http://") || strings.HasPrefix(in.URL, agent.CindyScheme) || strings.HasPrefix(in.URL, agent.LodyScheme) || strings.HasPrefix(in.URL, agent.AionUiScheme) || in.URL == autostart.LoginItemsURL {
+		if strings.HasPrefix(in.URL, "https://") || strings.HasPrefix(in.URL, "http://") || strings.HasPrefix(in.URL, agent.CindyScheme) || strings.HasPrefix(in.URL, agent.LodyScheme) || strings.HasPrefix(in.URL, agent.AionUiScheme) || strings.HasPrefix(in.URL, agent.CherryStudioScheme) || in.URL == autostart.LoginItemsURL {
 			open := w.OpenURL
 			// an app's import link is handed over only when something
 			// here opens it: the system says nothing when nothing does,
@@ -3009,7 +3212,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 				// Lody on Linux is run with the link, which xdg-open
 				// turned away (agent.OpenLody)
 				open = func(u string) error { return agent.OpenLody(u, app) }
-			case strings.HasPrefix(in.URL, agent.CindyScheme), strings.HasPrefix(in.URL, agent.AionUiScheme):
+			case strings.HasPrefix(in.URL, agent.CindyScheme), strings.HasPrefix(in.URL, agent.AionUiScheme), strings.HasPrefix(in.URL, agent.CherryStudioScheme):
 				open = app
 			}
 			// Open again on a sign-in says why it didn't open (#2043)

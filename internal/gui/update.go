@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/gateway"
+	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
 	"github.com/yetone/magpie/internal/update"
 )
@@ -44,8 +45,11 @@ type updater struct {
 	mirror   string      // error: the mirror the failed download came through (#893)
 	network  bool        // error: the network broke the download off (update.Network)
 	staged   string
-	// stable: latest was found on Settings' Stable channel
+	// stable: latest was found on Settings' Stable channel; newest, the
+	// newest release on every version when that is newer than this one
+	// and Stable has nothing newer (ylspcm on X)
 	stable bool
+	newest string
 	aside  string // Windows: where install moved the running exe, to put back
 	// in a .app: its binary, where this process started from
 	bundleExe string
@@ -115,6 +119,11 @@ type updateJSON struct {
 	// row says so in the app's language instead of the raw error
 	Network bool   `json:"network,omitempty"`
 	Error   string `json:"error,omitempty"`
+	// Channel: "stable" when the answer is Settings' Stable channel's;
+	// latest on it, Newest is the newest version out on every version,
+	// when newer than this one: Stable's "up to date" isn't the newest
+	Channel string `json:"channel,omitempty"`
+	Newest  string `json:"newest,omitempty"`
 	Done    int64  `json:"done,omitempty"` // downloading: bytes so far
 	// downloading: the step under way, "" before the first
 	// (update.StepDownload, StepRetry, StepVerify, StepUnpack,
@@ -152,8 +161,10 @@ func updateDue(s settings.Settings, last, now time.Time) bool {
 
 func (u *updater) start() {
 	u.place(runtime.GOOS, update.GUI)
-	gateway.SetRestarter(u.restartBeside) // magpie update in a terminal
-	go u.followReplaced(backendCtx)       // the app's or magpie web's update (visamzh on X)
+	gateway.SetRestarter(u.restartBeside)               // magpie update in a terminal
+	gateway.SetUpdater(u.updateAsked)                   // a magpie using this one updated
+	go provider.KeepRemotesUpdated(backendCtx, Version) // and this one's remotes
+	go u.followReplaced(backendCtx)                     // the app's or magpie web's update (visamzh on X)
 	if u.bundle != "" {
 		go update.ForgetOldStaging(u.bundle) // #3965
 	}
@@ -419,8 +430,20 @@ func (u *updater) run() {
 	}
 	stable := s.UpdateChannel == settings.UpdateStable
 	rel, err := update.LatestIn(cctx, lang)
+	// Stable has nothing newer than this one: the newest on every version
+	// is asked too, which the version row names. A bare "Up to date" on
+	// Stable, with newer releases out, read as the check being wrong, and
+	// the app was installed again by hand each time (ylspcm on X). Asked
+	// before u.mu, which the pages' reads need.
+	newest := ""
+	if stable && err == nil && !update.Newer(rel.Version, Version) {
+		if every, e := update.LatestEvery(cctx, lang); e == nil && update.Newer(every.Version, Version) {
+			newest = every.Version
+		}
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	u.newest = newest
 	if err == nil && u.latest != nil && update.Newer(u.latest.Version, rel.Version) {
 		if stable != u.stable {
 			// an older version than the one found before, on another
@@ -622,6 +645,12 @@ func (u *updater) jsonIn(lang string) updateJSON {
 		}
 	}
 	j := updateJSON{State: u.state, Current: Version, Error: u.err, Retry: u.retry}
+	if u.stable && u.latest != nil {
+		j.Channel = settings.UpdateStable
+		if u.state == "latest" {
+			j.Newest = u.newest
+		}
+	}
 	if u.latestStale() {
 		j.State = "" // not asked lately: no claim to be up to date
 	}

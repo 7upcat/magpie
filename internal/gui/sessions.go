@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"reflect"
-	"regexp"
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/filememo"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/sessions"
@@ -269,33 +269,7 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 		defer sessions.ShareListing()()
 		q := r.URL.Query()
 		n, _ := strconv.Atoi(q.Get("days"))
-		st := statsFor(n)
-		out := st.Overview(q.Get("agent"), q.Get("model"), q.Get("cwd"), 8)
-		period := usage.All
-		if n > 0 {
-			if p, ok := usage.RangeOf(st.From, st.To); ok {
-				period = p
-			}
-		}
-		needCodex := false
-		for key, top := range out.Top {
-			out.Top[key] = slices.Clone(top)
-			for i := range out.Top[key] {
-				if out.Top[key][i].Agent == "codex" {
-					needCodex = true
-				}
-			}
-		}
-		if needCodex {
-			modelEffort := usage.CodexModelEffort(period)
-			for key, top := range out.Top {
-				for i := range top {
-					addCodexSummaryModelEffort(&top[i], modelEffort)
-				}
-				out.Top[key] = top
-			}
-		}
-		writeJSON(rw, out)
+		writeOverview(rw, max(0, n), q.Get("agent"), q.Get("model"), q.Get("cwd"))
 	}))
 	// progress is how far the reading of the session files has got, for
 	// the page to show while its first read takes a while.
@@ -636,6 +610,93 @@ func sameStats(a, b sessions.Stats) bool {
 	return a.From == b.From && a.To == b.To && slices.Equal(a.Keys, b.Keys) && reflect.DeepEqual(a.Days, b.Days)
 }
 
+// overviewKey is what an overview's answer is made from: the stats it
+// was summed from (statsForGen's gen, which moves only when they do) and
+// the page's filters. The Codex rows' model and effort are added after.
+type overviewKey struct {
+	days              int
+	gen               uint64
+	agent, model, cwd string
+}
+
+// overviews are the last few overviews sent, encoded. The Sessions page
+// asks for one on every 15s poll, and summing a long history's 34k
+// sessions by tool and skill again, to the same answer, was ~36 ms of CPU
+// an ask.
+var overviews struct {
+	sync.Mutex
+	m map[overviewKey]*overviewKept
+}
+
+type overviewKept struct {
+	out   sessions.Overview // before the Codex rows' model and effort
+	codex bool              // a top row is Codex's
+	// the CodexModelEffort map body was made with, held so that a new one
+	// is never told from it by an address the old one gave back
+	effort map[string][]sessions.ModelEffort
+	body   []byte
+}
+
+// overviewsMade counts the overviews summed, for tests.
+var overviewsMade atomic.Int64
+
+const overviewsKept = 8
+
+func writeOverview(rw http.ResponseWriter, days int, agentID, model, cwd string) {
+	st, gen := statsForGen(days)
+	key := overviewKey{days, gen, agentID, model, cwd}
+	overviews.Lock()
+	k := overviews.m[key]
+	overviews.Unlock()
+	if k == nil {
+		overviewsMade.Add(1)
+		k = &overviewKept{out: st.Overview(agentID, model, cwd, 8)}
+		for _, top := range k.out.Top {
+			for i := range top {
+				k.codex = k.codex || top[i].Agent == "codex"
+			}
+		}
+	}
+	var effort map[string][]sessions.ModelEffort
+	if k.codex {
+		period := usage.All
+		if days > 0 {
+			if p, ok := usage.RangeOf(st.From, st.To); ok {
+				period = p
+			}
+		}
+		effort = usage.CodexModelEffort(period)
+	}
+	body := k.body
+	if body == nil || reflect.ValueOf(effort).UnsafePointer() != reflect.ValueOf(k.effort).UnsafePointer() {
+		out := k.out
+		out.Top = make(map[string][]sessions.Summary, len(k.out.Top))
+		for by, top := range k.out.Top {
+			top = slices.Clone(top)
+			if k.codex {
+				for i := range top {
+					addCodexSummaryModelEffort(&top[i], effort)
+				}
+			}
+			out.Top[by] = top
+		}
+		b, err := json.Marshal(out)
+		if err != nil {
+			fail(rw, err)
+			return
+		}
+		body = append(b, '\n')
+		overviews.Lock()
+		if overviews.m == nil || len(overviews.m) >= overviewsKept && overviews.m[key] == nil {
+			overviews.m = map[overviewKey]*overviewKept{} // the page asks a few at a time; the rest were left behind
+		}
+		overviews.m[key] = &overviewKept{out: k.out, codex: k.codex, effort: effort, body: body}
+		overviews.Unlock()
+	}
+	rw.Header().Set("Content-Type", "application/json")
+	_, _ = rw.Write(body)
+}
+
 func statsFor(days int) sessions.Stats {
 	st, _ := statsForGen(days)
 	return st
@@ -969,13 +1030,16 @@ func retightenGC() {
 	afterNextGC(retightenGC)
 }
 
-// steadyGCStart has the heap grow by half of what it holds before a
+// steadyGCStart has the heap grow by a quarter of what it holds before a
 // collection, or by steadyGCRoom when that is more, not Go's default of
 // all of it, for the life of the process; a GOGC the user set is kept.
 // A window resting on ~60 MB live polls /api/state, /api/drift and
 // /api/providers, ~10 MB thrown away a round, so at the default its
-// footprint peaked at 138 MB; under half, 107-108 MB, for ~9% more CPU in
-// the polls. Reads under a tight GC still set their tenth while they run.
+// footprint peaked at 138 MB and under half at 107-108 MB. On a real
+// account's history (~100 MB live) a quarter took the resting footprint
+// from 171 to 146 MB and its peak from 200 to 166 MB, with 60 busy poll
+// rounds at 5.14s of CPU against 5.12s. Reads under a tight GC still set
+// their tenth while they run.
 func steadyGCStart() {
 	if os.Getenv("GOGC") != "" {
 		return
@@ -992,13 +1056,13 @@ func steadyGCStart() {
 	}
 }
 
-// steadyGCPercent is the half steadyGCStart lets the heap grow by.
-const steadyGCPercent = 50
+// steadyGCPercent is the quarter steadyGCStart lets the heap grow by.
+const steadyGCPercent = 25
 
-// steadyGCRoom is the least it grows by: half of a small heap is a few
-// MB, and a heap under 64 MB grows by 32 MB, never by more than Go's
+// steadyGCRoom is the least it grows by: a quarter of a small heap is a
+// few MB, and a heap under 64 MB grows by 16 MB, never by more than Go's
 // default.
-const steadyGCRoom = 32 << 20
+const steadyGCRoom = 16 << 20
 
 // steadyPercent is the GOGC steadyGCStart sets on a live heap of live
 // bytes (0 before the first collection: steadyGCPercent).
@@ -1055,7 +1119,7 @@ func agentLine(a *agent.Agent, launch, goos string) string {
 }
 
 // plainBin is a program name a distro's shell takes as it is.
-var plainBin = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+var plainBin = lazyre.New(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
 
 // agentTerminal is openTerminal, a var so a test opens no terminal.
 var agentTerminal = openTerminal

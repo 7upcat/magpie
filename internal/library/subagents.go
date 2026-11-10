@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"unicode"
@@ -19,6 +18,7 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
 // Subagents (#2283) are agents of their own the main agent hands a task
@@ -74,7 +74,7 @@ type SubagentFile struct {
 // subagentNameRe is a name every agent takes: Cursor's and CodeBuddy's
 // are lowercase letters, digits and -, Qwen Code's 2 to 50 characters
 // that neither start nor end with - (validateName in its subagents).
-var subagentNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,48}[a-z0-9]$`)
+var subagentNameRe = lazyre.New(`^[a-z0-9][a-z0-9-]{0,48}[a-z0-9]$`)
 
 // reservedSubagents are names Qwen Code keeps for itself.
 var reservedSubagents = []string{"self", "system", "user", "model", "tool", "config", "default", "main"}
@@ -261,7 +261,7 @@ func (l *Library) subagent(name string) *Subagent {
 }
 
 // renderSubagent is s as an agent's file: of its skills and servers,
-// those the library still has.
+// those the library still has, a server turned off (ServerOn) left out.
 func (l *Library) renderSubagent(sp *subagentSpec, s *Subagent) []byte {
 	var skills, mcp []string
 	if sp.skills {
@@ -273,7 +273,7 @@ func (l *Library) renderSubagent(sp *subagentSpec, s *Subagent) []byte {
 	}
 	if sp.mcp {
 		for _, n := range s.MCP {
-			if l.server(n) != nil {
+			if x := l.server(n); x != nil && !x.Hidden {
 				mcp = append(mcp, n)
 			}
 		}

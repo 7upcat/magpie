@@ -338,6 +338,7 @@ func (m *model) openClassifier(g provider.Group) {
 const ruleHint = `use=<model>, and any of: tokens=200k · images · effort=on|low|medium|high|xhigh|max · agents=codex,claude
 intent="a quick question" (the group's classifier=<model> tells it) · compact
 time=09:00-18:00 (22:00-08:00 runs past midnight) · days=mon-fri · tz=Asia/Shanghai (this computer's zone if none) · folders=~/work/acme,~/oss · except-folders=~/old · at=<n> for its place
+when="effort is not off" · when="tokens < 20k" · when="agent is not codex" · when=subagent · when="message contains …"
 use-effort=low|medium|high|xhigh|max: the reasoning the model is asked for, whatever the agent asked
 or pause=<model> time=… days=… agents=… folders=… except-folders=…: the model is left out of the group then, not even a fallback`
 
@@ -475,7 +476,8 @@ func (m model) updateGroup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}, id+said)
 		}
 		model, effort := provider.MemberEffort(id)
-		to := provider.WithMemberEffort(model, nextMemberEffort(effort))
+		_, acct := provider.MemberAccount(id) // on its own account still
+		to := provider.WithMemberAccount(provider.WithMemberEffort(model, nextMemberEffort(effort)), acct)
 		return m, saveGroup(g.ID, func(g *provider.Group) error {
 			g.RenameMember(id, to)
 			return nil

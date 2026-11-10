@@ -121,6 +121,8 @@ type ctxJSON struct {
 const (
 	ctxSessions = 80
 	ctxPoints   = 160
+	// ctxSessionPoints is how many a session's own line keeps, the latest
+	ctxSessionPoints = 1000
 )
 
 func median(xs []int) int {
@@ -322,15 +324,17 @@ func joinConvs(routes []ctxRec, list func() []sessions.Session) {
 		if r.Session != "" || r.Parent != "" {
 			continue
 		}
-		id, byReply := ownerBy(r.Agent, r.ResponseID, r.Conv, of)
-		if !byReply && r.ResponseID != "" && of[ownerKey(r.Agent, ownerResponse, r.ResponseID)] != "" {
+		// a done call is named by its reply: a turn's messages (Route.LastConvs)
+		// are for one still answering, which the tab doesn't count
+		id, named := ownerBy(r.Agent, r.ResponseID, r.Conv, nil, of)
+		if !named && r.ResponseID != "" && of[ownerKey(r.Agent, ownerResponse, r.ResponseID)] != "" {
 			// the reply names another conversation, and the guard for a
 			// vendor's repeated ids keeps the opening: as it did before
 			// reply ids were read
 			routes[i].Session = id
 			continue
 		}
-		if !byReply && waitingForReply(&routes[i], sharedOpening(r.Agent, r.Conv, of), now) {
+		if !named && waitingForReply(&routes[i], sharedOpening(r.Agent, r.Conv, of), now) {
 			// its opening is the source's and a fork's both, and its reply
 			// names no one yet: it is neither's until it does
 			routes[i].Unmatched = true
@@ -359,20 +363,39 @@ func waitingForReply(r *ctxRec, shared bool, now time.Time) bool {
 // fork names no parent). Another session's opening goes by the opening, as
 // it did before reply ids were read.
 func ownerOf(agent, responseID, conv string, of map[string]string) string {
-	id, _ := ownerBy(agent, responseID, conv, of)
+	id, _ := ownerBy(agent, responseID, conv, nil, of)
 	return id
 }
 
-// ownerBy is ownerOf, and whether the reply named the session rather than
-// the opening: a route whose opening a fork copied too, and whose reply names
-// no session, belongs to neither (joinConvs).
-func ownerBy(agent, responseID, conv string, of map[string]string) (id string, byReply bool) {
+// ownerOfRoute is ownerOf of a route, its newest turn's message too: the
+// Routing page names a request still answering by it, since no reply id
+// exists yet (Route.LastConvs).
+func ownerOfRoute(r gateway.Route, of map[string]string) string {
+	id, _ := ownerBy(r.Agent, r.ResponseID, r.Conv, r.LastConvs, of)
+	return id
+}
+
+// ownerBy is ownerOf, and whether the reply or the turn's own message named
+// the session rather than the opening: a route whose opening a fork copied
+// too, and whose reply names no session, belongs to neither (joinConvs).
+// turnConvs are the ids of the messages the request's turn carries
+// (Route.LastConvs): a request still answering has no reply id, and those
+// messages are its branch's file's, not its source's. They name a session
+// under the reply's guard: one whose own turn has them alone, and that
+// agrees with the opening — a "继续" another conversation's newest turn
+// has too doesn't take this one.
+func ownerBy(agent, responseID, conv string, turnConvs []string, of map[string]string) (id string, named bool) {
 	opened := ""
 	if conv != "" {
 		opened = of[ownerKey(agent, ownerConv, conv)]
 	}
 	if responseID != "" {
 		if id := of[ownerKey(agent, ownerResponse, responseID)]; id != "" && (opened == "" || forkedFrom(agent, id, opened, conv, of)) {
+			return id, true
+		}
+	}
+	for _, c := range turnConvs {
+		if id := of[ownerKey(agent, ownerLast, c)]; id != "" && (opened == "" || forkedFrom(agent, id, opened, conv, of)) {
 			return id, true
 		}
 	}
@@ -403,14 +426,16 @@ func forkedFrom(agent, id, from, conv string, of map[string]string) bool {
 }
 
 // The kinds of id a route without a session id is named by: the reply it
-// got, and the conversation it opens; and a session's source, for the
-// session a fork's reply names (ForkOf), the opening a fork's seed carried,
-// kept on the fork itself (SeedConvs), and that opening kept again among the
-// openings a fork copied, which names neither the source nor the fork alone
-// (ownerCopied).
+// got, and the conversation it opens; the message its newest turn carried,
+// which a request still answering is known by (ownerLast); and a session's
+// source, for the session a fork's reply names (ForkOf), the opening a
+// fork's seed carried, kept on the fork itself (SeedConvs), and that
+// opening kept again among the openings a fork copied, which names neither
+// the source nor the fork alone (ownerCopied).
 const (
 	ownerResponse = "response"
 	ownerConv     = "conv"
+	ownerLast     = "last"
 	ownerFork     = "fork"
 	ownerSeed     = "seed"
 	ownerCopied   = "copied"
@@ -420,10 +445,10 @@ func ownerKey(agent, kind, id string) string { return agent + "\x00" + kind + "\
 
 // routeOwners is each agent's reply ids and conversation ids (agent, NUL,
 // kind, NUL, the id) and the session of that agent each was read from
-// (sessions' ResponseIDs and Convs); "" for an id two sessions share, which
-// stays as it is. A fork's session id is kept with the one it was forked
-// from (ownerFork), and the openings its seed carried among the openings a
-// fork copied (ownerCopied).
+// (sessions' ResponseIDs, Convs and TurnConvs); "" for an id two sessions
+// share, which stays as it is. A fork's session id is kept with the one it
+// was forked from (ownerFork), and the openings its seed carried among the
+// openings a fork copied (ownerCopied).
 func routeOwners(list []sessions.Session) map[string]string {
 	of := map[string]string{}
 	put := func(k, id string) {
@@ -436,6 +461,9 @@ func routeOwners(list []sessions.Session) map[string]string {
 	for _, s := range list {
 		for _, c := range s.Convs {
 			put(ownerKey(s.Agent, ownerConv, c), s.ID)
+		}
+		for _, c := range s.TurnConvs {
+			put(ownerKey(s.Agent, ownerLast, c), s.ID)
 		}
 		for _, r := range s.ResponseIDs {
 			put(ownerKey(s.Agent, ownerResponse, r), s.ID)
@@ -498,6 +526,13 @@ func contextOf(routes []gateway.Route, days int) ctxJSON {
 
 // contextOfRecs is contextOf of the routes as the tab reads them.
 func contextOfRecs(routes []ctxRec, days int) ctxJSON {
+	return contextOfRecsFor(routes, days, "")
+}
+
+// contextOfRecsFor is contextOfRecs, and when only isn't "" it lists that
+// one session alone (agent + "\x00" + its id), with up to ctxSessionPoints
+// of its requests: a session's line on the Sessions page.
+func contextOfRecsFor(routes []ctxRec, days int, only string) ctxJSON {
 	sort.SliceStable(routes, func(i, j int) bool { return routes[i].Time.Before(routes[j].Time) })
 	out := ctxJSON{Days: days, Agents: []ctxAgent{}, Sessions: []ctxSession{}}
 	type agentAcc struct {
@@ -615,14 +650,21 @@ func contextOfRecs(routes []ctxRec, days int) ctxJSON {
 	// the sessions, the latest first
 	slices.SortFunc(order, func(a, b string) int { return sess[b].Last.Compare(sess[a].Last) })
 	var codexIDs, desktopIDs, piIDs []string
+	keep := ctxPoints
+	if only != "" {
+		keep = ctxSessionPoints
+	}
 	for _, sk := range order {
 		s := sess[sk]
+		if only != "" && sk != only {
+			continue
+		}
 		if acc := agents[s.Agent]; acc != nil && s.Requests > 1 {
 			acc.fills = append(acc.fills, float64(s.Peak)/float64(s.Window))
 		}
 		if len(out.Sessions) < ctxSessions {
-			if len(s.Points) > ctxPoints {
-				s.Points = s.Points[len(s.Points)-ctxPoints:]
+			if len(s.Points) > keep {
+				s.Points = s.Points[len(s.Points)-keep:]
 			}
 			out.Sessions = append(out.Sessions, *s)
 			switch s.Agent {
@@ -858,13 +900,33 @@ func contextRecs(r *http.Request, days int) (out []ctxRec, stamp string) {
 }
 
 func contextRecsLocked(r *http.Request, days int) (out []ctxRec, stamp string) {
-	seen := map[int64]bool{}
 	now := time.Now()
-	var key strings.Builder
-	asked := map[string]bool{}
+	list := make([]string, 0, days)
 	for i := days - 1; i >= 0; i-- {
-		day := now.AddDate(0, 0, -i).Format("2006-01-02")
+		list = append(list, now.AddDate(0, 0, -i).Format("2006-01-02"))
+	}
+	out, stamp = daysRecsLocked(r, list)
+	// a day out of the range is let go; the range's days are kept for the
+	// next refresh
+	asked := map[string]bool{}
+	for _, day := range list {
 		asked[day] = true
+	}
+	for day := range ctxKept.days {
+		if !asked[day] {
+			delete(ctxKept.days, day)
+		}
+	}
+	return out, stamp
+}
+
+// daysRecsLocked reads the routes of the days listed, from what is kept
+// of them when their files are as they were, and the live trace's not yet
+// in the history.
+func daysRecsLocked(r *http.Request, list []string) (out []ctxRec, stamp string) {
+	seen := map[int64]bool{}
+	var key strings.Builder
+	for _, day := range list {
 		st := dayStamp(day)
 		fmt.Fprintf(&key, "%s=%s", day, st)
 		d, ok := ctxKept.days[day]
@@ -883,13 +945,6 @@ func contextRecsLocked(r *http.Request, days int) (out []ctxRec, stamp string) {
 			}
 		}
 	}
-	// a day out of the range is let go; the range's days are kept for the
-	// next refresh
-	for day := range ctxKept.days {
-		if !asked[day] {
-			delete(ctxKept.days, day)
-		}
-	}
 	if gw := served.Load(); gw != nil {
 		for _, x := range gw.Trace(r.Context(), 0, 0).Routes {
 			if x.Done && !seen[x.ID] {
@@ -905,6 +960,46 @@ func contextRecsLocked(r *http.Request, days int) (out []ctxRec, stamp string) {
 		out[i].Model = pub(out[i].Model)
 	}
 	return out, key.String()
+}
+
+// ctxSessionDays is how far back a session's line reads: the Usage page's
+// Context tab's longest range
+const ctxSessionDays = 30
+
+// contextSession is one agent's session as the Context tab counts it,
+// every request of it the gateway saw from the day of from to the day of
+// to (the session's first and last, as the Sessions page has them), read
+// within the last ctxSessionDays days; nil when the gateway saw none.
+// The days read stay kept until the tab's next read lets go of those
+// out of its range.
+func contextSession(r *http.Request, agent, id string, from, to time.Time) *ctxSession {
+	now := time.Now()
+	oldest := now.AddDate(0, 0, -(ctxSessionDays - 1))
+	if from.IsZero() || from.Before(oldest) {
+		from = oldest
+	}
+	if to.IsZero() || to.After(now) {
+		to = now
+	}
+	// day by day at noon, which a change of clocks never moves to another day
+	y, m, dd := from.Local().Date()
+	last := to.Local().Format("2006-01-02")
+	var list []string
+	for d := time.Date(y, m, dd, 12, 0, 0, 0, time.Local); len(list) < ctxSessionDays; d = d.AddDate(0, 0, 1) {
+		day := d.Format("2006-01-02")
+		list = append(list, day)
+		if day >= last {
+			break
+		}
+	}
+	ctxKept.Lock()
+	recs, _ := daysRecsLocked(r, list)
+	ctxKept.Unlock()
+	out := contextOfRecsFor(recs, len(list), agent+"\x00"+id)
+	if len(out.Sessions) == 0 {
+		return nil
+	}
+	return &out.Sessions[0]
 }
 
 // contextFor is the tab's answer for the days asked for: the last one
@@ -928,6 +1023,20 @@ func contextFor(r *http.Request, days int) ctxJSON {
 }
 
 func contextRoutesAPI(mux *http.ServeMux) {
+	// one session's prompts, request by request, against its window: the
+	// line the Sessions page draws in a session's details (liang_yongxiang
+	// on Discord). from and to are its first and last, RFC 3339.
+	mux.HandleFunc("GET /api/context/session", func(rw http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		agent, id := q.Get("agent"), q.Get("id")
+		if agent == "" || id == "" {
+			http.Error(rw, "agent and id are needed", http.StatusBadRequest)
+			return
+		}
+		from, _ := time.Parse(time.RFC3339, q.Get("from"))
+		to, _ := time.Parse(time.RFC3339, q.Get("to"))
+		writeJSON(rw, map[string]any{"session": contextSession(r, agent, id, from, to)})
+	})
 	mux.HandleFunc("GET /api/context", func(rw http.ResponseWriter, r *http.Request) {
 		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
 		if days <= 0 || days > 30 {

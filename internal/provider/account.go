@@ -25,7 +25,6 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -37,6 +36,7 @@ import (
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/claudecode"
 	"github.com/yetone/magpie/internal/filelock"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/plugin"
 	"github.com/yetone/magpie/internal/proc"
 	"github.com/yetone/magpie/internal/settings"
@@ -420,6 +420,18 @@ type claudeAuth struct {
 	RateLimitTier    string   `json:"rateLimitTier"`
 }
 
+// plan names the Claude subscription as Anthropic sells it now:
+// Max 20x is Claude Ultra, while Claude Code still says "max" for it
+// and tells the two apart only by the rate-limit tier.
+func (a claudeAuth) plan() string { return claudePlan(a.SubscriptionType, a.RateLimitTier) }
+
+func claudePlan(sub, tier string) string {
+	if sub == "max" && strings.Contains(tier, "max_20x") {
+		return "ultra"
+	}
+	return sub
+}
+
 // claudeCredentials keeps the whole credential blob in raw, so refreshing a
 // token writes back everything else — MCP OAuth state included — untouched.
 type claudeCredentials struct {
@@ -606,7 +618,7 @@ func claudeKeychainAccount() string {
 	return name
 }
 
-var keychainAccountRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+var keychainAccountRe = lazyre.New(`^[a-zA-Z0-9._-]+$`)
 
 // keychainText undoes `security find-generic-password -w` printing a
 // password with a character it can't print — a newline — as hex.
@@ -811,9 +823,9 @@ func claudeAccount() (Provider, bool) {
 	if signedOut {
 		return claudeStandInAccount()
 	}
-	plan := c.OAuth.SubscriptionType
+	plan := c.OAuth.plan()
 	if statusPlan != "" {
-		plan = statusPlan
+		plan = claudePlan(statusPlan, c.OAuth.RateLimitTier)
 	}
 	// named as its saved login is (liveLogin): it is then the account Logins
 	// flags Active, not served a second time beside itself, and its
@@ -867,7 +879,10 @@ func claudeProvider(acct *Account) Provider {
 	// Claude's models are the ones magpie knows and the ones Claude Code
 	// was told an account has (claude_models.go): listing them would ask
 	// Anthropic with the account's sign-in, which magpie never does
-	acct.fetch = func(context.Context) ([]catalog.Model, error) {
+	acct.fetch = func(ctx context.Context) ([]catalog.Model, error) {
+		// models.dev's list, fetched again first when it is older than
+		// a few minutes: a model launched since the day's sync is listed
+		catalog.Asked(ctx)
 		ms := claudeModels()
 		return ms, catalog.SaveLive("claude", claudeBase, ms)
 	}
@@ -1062,11 +1077,11 @@ func codexAccount(home string) (Provider, bool) {
 	acct.models = catalog.Codex
 	acct.listedOnly = true
 	acct.fetch = func(ctx context.Context) ([]catalog.Model, error) {
-		ms, err := codexModels(ctx, acct.sign)
+		ms, ver, err := codexModelsAsked(ctx, acct.sign)
 		if err != nil {
 			return nil, err
 		}
-		catalog.SaveLive(accountModels("codex", acct.User), CodexBase, ms)
+		catalog.SaveLiveAsked(accountModels("codex", acct.User), CodexBase, ver, ms)
 		codexFetchSaved(ctx)
 		ms = codexPoolModels(ms)
 		return ms, catalog.SaveLive("codex", CodexBase, ms)
@@ -1169,6 +1184,18 @@ func codexTokenRenewing(ctx context.Context, dir, stale string) (tok, accountID 
 	// moment on Windows is waited out (#2239, #1505). A write that still
 	// fails loses the rotation, said in the log; the fresh access token in
 	// hand still serves this request.
+	//
+	// Only over the sign-in this refresh started from, though. The refresh
+	// is a network round trip, and the store may hold another sign-in by
+	// now: Codex signed in to another account (the Codex app's own
+	// sign-in, or a magpie outside codexMu), or signed out. Writing the
+	// refreshed one over it switched Codex back to the account it had
+	// been switched off (darwish4021 on Discord: "switched my account").
+	// The fresh access token still serves the request in hand.
+	if now, _, err := readCodexLogin(dir, true); err != nil || !sameRefreshToken(now, a.Tokens.RefreshToken) {
+		log.Printf("codex: the sign-in in %s changed while %s was being refreshed; the refresh is not written over it", dir, accountID)
+		return tok, accountID, nil
+	}
 	if out, err := json.MarshalIndent(raw, "", "  "); err == nil {
 		if werr := st.write(out); werr != nil {
 			where := st.file()
@@ -1221,6 +1248,13 @@ func forcedReason(ctx context.Context) string {
 // body of client_id, grant_type, refresh_token and refresh_reason, with
 // no scope (a refresh keeps the scopes granted), and Codex's originator
 // and User-Agent.
+// sameRefreshToken says the sign-in b still holds refresh, the refresh
+// token a refresh started from.
+func sameRefreshToken(b []byte, refresh string) bool {
+	var a codexAuth
+	return json.Unmarshal(b, &a) == nil && refresh != "" && a.Tokens.RefreshToken == refresh
+}
+
 func codexRefresh(ctx context.Context, raw map[string]any, reason string) (string, error) {
 	toks, _ := raw["tokens"].(map[string]any)
 	if toks == nil {
@@ -1671,7 +1705,7 @@ func copilotAPIs(endpoints []string) []string {
 }
 
 // internal is a Copilot model id nobody picks by hand.
-var copilotInternal = regexp.MustCompile(`^(copilot-search|exec-agent|trajectory)|-(secondary|tertiary|4th|free-auto)$`)
+var copilotInternal = lazyre.New(`^(copilot-search|exec-agent|trajectory)|-(secondary|tertiary|4th|free-auto)$`)
 
 // A model Copilot offers with terms of its own stays disabled until the
 // account accepts them, as VS Code does when one is first picked; magpie

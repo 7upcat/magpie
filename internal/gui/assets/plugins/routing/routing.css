@@ -21,24 +21,29 @@
 /* a flowing wire is drawn by its copy in .rt-flows, a layer of its own, so
    the wires that don't move aren't drawn again each frame (#3164) */
 .rt-wires path.flown { visibility: hidden; animation: none; }
-.rt-flows { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; will-change: transform; }
-.rt-flows path { fill: none; stroke: var(--agent, var(--muted)); stroke-width: 1.5; stroke-dasharray: 3 5; animation: rtflow .7s linear infinite; }
+.rt-flows { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; will-change: transform; opacity: var(--rt-fade, 1); }
+/* its dashes move by --rt-dash, which a timer sets 15 times a second
+   (slowTick): an animated offset was drawn again every frame. With motion
+   reduced they stand still and the layer fades by --rt-fade instead */
+.rt-flows path { fill: none; stroke: var(--agent, var(--muted)); stroke-width: 1.5; stroke-dasharray: 3 5; stroke-dashoffset: var(--rt-dash, 0); }
 @keyframes rtflow { to { stroke-dashoffset: -8; } }
 /* the magpies: one carries each request out, another brings its answer
-   back — the dot at the tip of its beak. They fly along the wires and
-   under the cards, through magpie's box rather than over its words: over
-   them, with two agents sending at once one sat on the hub's address and
-   another on a member's row (penershu on X). Each flight starts and ends
-   a dot clear of the card at either end of its wire (pose). */
-.rt-sky { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+   back — the dot at the tip of its beak. They fly over the cards (the
+   owner, 11-09: under them, 869c4d112, a magpie vanished crossing
+   magpie's box), but off their words: each flight starts and ends a dot
+   clear of the card at either end of its wire (pose), so a dot held at
+   its seat or waiting at magpie sits beside it, not on its address
+   (penershu on X), and the way through magpie keeps to its edge (via). */
+.rt-sky { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 /* each agent's requests and answers fly in its colour: a request filled
    with it, an answer ringed with it, a failure ringed red */
 .rt-sky .pkt { fill: var(--agent, var(--fg)); filter: drop-shadow(0 0 3px var(--agent, var(--muted))); }
 .rt-sky .pkt.back { fill: var(--card); stroke: var(--agent, var(--fg)); stroke-width: 2.25; }
 .rt-sky .pkt.back.err { fill: var(--agent, var(--card)); stroke: var(--red); }
 .rt-sky path.via { fill: none; stroke: none; }
-.rt-sky .pkt.held { animation: rtheld 1.2s ease-in-out infinite; }
-@keyframes rtheld { 50% { opacity: .45; } }
+/* a dot held at an account fades by --rt-held, from the same timer: an
+   animated opacity under its shadow was drawn again every frame */
+.rt-sky .pkt.held { opacity: var(--rt-held, 1); }
 .rt-flier { color: var(--fg); }
 .rt-flier .body, .rt-flier .tail, .rt-flier .wing path:first-child, .rt-flier .wing.far { fill: currentColor; }
 .rt-flier .wing.far { opacity: .45; }
@@ -242,7 +247,7 @@
 .rt-time .vendor { --rt-time: var(--fg-2); }
 .rt-off { padding: 18px 4px; text-align: center; color: var(--muted); font-size: 13px; }
 @media (prefers-reduced-motion: reduce) {
-  .rt-wires path.live, .rt-flows path, .rt-sky .pkt.held, .rt-accts li.new, .rt-accts li.hit, .rt-hub.tick, .rt-src.tick, .rt-cap.in, .masking .pii { animation: none; }
+  .rt-wires path.live, .rt-accts li.new, .rt-accts li.hit, .rt-hub.tick, .rt-src.tick, .rt-cap.in, .masking .pii { animation: none; }
   .rt-accts li.now .dot::after, .rt-steps li.wait::after { animation: none; }
   .rt-accts li { transition: none; }
 }
@@ -279,9 +284,16 @@
 .rt-gsec > .row-head:first-child .rt-gfilter { flex: 0 1 300px; width: auto; margin: 0; }
 .rt-gsec > .row-head:first-child .rt-gcount { margin-left: 10px; white-space: nowrap; }
 .rt-gsec > .row-head:first-child .rt-gfilter + .rt-gcount { margin-left: 10px; }
+/* its buttons on the right apart, so one's hover never meets the next,
+   and New group, the filled one, a little further */
+.rt-gsec > .row-head:first-child > .grow ~ * + * { margin-left: 4px; }
+.rt-gsec > .row-head:first-child > .grow ~ .rt-gnew { margin-left: 8px; }
+/* the way back to Routing (gBack): beside the sidebar only when the page was opened from Routing */
+.rt-gsec > .row-head:first-child .rt-gback { flex: none; margin-right: 8px; white-space: nowrap; }
+body.side-nav #view-groups:not(.rt-gfrom) .rt-gback { display: none; }
 /* the settings for every group, a card under the list */
-.rt-gset > :is(.rt-gfound, .rt-gnames) { padding: 12px 14px; }
-.rt-gset > .rt-gnames { border-top: 1px solid var(--line-2); }
+.rt-gset > :is(.rt-gfound, .rt-gnames, .rt-gdef) { padding: 12px 14px; }
+.rt-gset > :is(.rt-gnames, .rt-gdef) { border-top: 1px solid var(--line-2); }
 /* an email, hidden: stand-in letters of its shape, softly blurred —
    coming in out of focus when asked for */
 .pii { filter: blur(2.2px); opacity: .5; user-select: none; }
@@ -460,6 +472,9 @@ button.rt-session { cursor: pointer; }
    line (danzi002 on Discord), two of them still on a phone */
 :where(.rt-more:not(.min1150)) .rt-acts, .rt-cols.solo .rt-acts { columns: min(240px, 40vw); column-gap: 0; }
 :where(.rt-more:not(.min1150)) .rt-acts > *, .rt-cols.solo .rt-acts > * { break-inside: avoid; }
+:where(.rt-more:not(.min1150)) .rt-pgrp.long, .rt-cols.solo .rt-pgrp.long { break-inside: auto; }
+:where(.rt-more:not(.min1150)) .rt-pgrp.long > *, .rt-cols.solo .rt-pgrp.long > * { break-inside: avoid; }
+:where(.rt-more:not(.min1150)) .rt-pgrp.long > .rt-prov, .rt-cols.solo .rt-pgrp.long > .rt-prov { break-after: avoid; }
 .rt-cols.solo { grid-template-columns: minmax(0, 1fr); }
 .rt-reqs.none { display: block; background: none; border-color: transparent; }
 .rt-reqs.none .empty-state { padding: 14px 12px 18px; font-size: 12px; line-height: 1.6; }
@@ -467,7 +482,11 @@ button.rt-session { cursor: pointer; }
 .rt-prov { display: flex; align-items: center; gap: 7px; padding: 8px 12px 4px; font-size: 12px; }
 .rt-prov .ic, .rt-prov .ic img, .rt-prov .ic svg { width: 14px; height: 14px; }
 .rt-prov > span:last-child { margin-left: auto; font-size: 10.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; }
-.rt-acts > :not(:first-child) > .rt-prov:first-child { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 10px; }
+/* a provider's heading and rows, one box (.rt-pgrp); one to a line, a
+   line between providers; in columns a gap instead, a line standing over
+   a column's top */
+.rt-pgrp + .rt-pgrp { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 2px; }
+:where(.rt-more:not(.min1150)) .rt-pgrp + .rt-pgrp, .rt-cols.solo .rt-pgrp + .rt-pgrp { border-top: 0; margin-top: 0; padding-top: 6px; }
 /* a routing named where it can be changed: a way to where it is set */
 .rt-go { cursor: pointer; }
 .rt-go::after { content: " ›"; }
@@ -645,12 +664,12 @@ button.rt-session { cursor: pointer; }
 .rt-goffbox { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
 .rt-goffwhy { flex: 1 1 260px; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--fg-2); }
 .rt-goffon { flex: none; }
-.rt-gfound, .rt-gnames { display: flex; align-items: center; gap: 12px; padding: 2px 4px 4px; }
-.rt-gfound .txt, .rt-gnames .txt { flex: 1; min-width: 0; display: grid; gap: 2px; }
-.rt-gfound b, .rt-gnames b { font-size: 12.5px; font-weight: 600; }
-.rt-gfound small, .rt-gnames small { font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.rt-gfound, .rt-gnames, .rt-gdef { display: flex; align-items: center; gap: 12px; padding: 2px 4px 4px; }
+.rt-gfound .txt, .rt-gnames .txt, .rt-gdef .txt { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.rt-gfound b, .rt-gnames b, .rt-gdef b { font-size: 12.5px; font-weight: 600; }
+.rt-gfound small, .rt-gnames small, .rt-gdef small { font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 /* the names setting's three choices go under its words when it is narrow */
-.rt-gnames { flex-wrap: wrap; }
+.rt-gnames, .rt-gdef { flex-wrap: wrap; }
 /* the providers kept out of found groups: a text button under the
    switch's words, its menu the app's */
 .rt-gfound .rt-skip-pick { justify-self: start; display: inline-flex; align-items: center; gap: 3px; max-width: 100%; height: 22px; margin-left: -7px; font-size: 11.5px; }
@@ -658,7 +677,7 @@ button.rt-session { cursor: pointer; }
 .rt-skip-pick svg { flex: none; opacity: .7; transition: transform .15s var(--ease); }
 .rt-skip-pick.open svg { transform: rotate(180deg); }
 .pop.proto-menu.rt-skip-menu { width: 230px; max-width: calc(100vw - 16px); background: var(--card); }
-.rt-gnames .txt { flex-basis: 220px; }
+.rt-gnames .txt, .rt-gdef .txt { flex-basis: 220px; }
 .rt-ghidden { display: flex; align-items: center; padding: 4px 12px 4px 8px; }
 .rt-ghidden .rt-gremoved { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--faint); }
 .rt-ghidden .rt-gremoved:hover, .rt-ghidden .rt-gremoved.open { color: var(--fg-2); }
@@ -666,6 +685,11 @@ button.rt-session { cursor: pointer; }
 .rt-group.rt-gpick { cursor: default; }
 .rt-group.rt-gpick.on { background: var(--card-2); }
 .rt-gedit { cursor: default; scroll-margin-top: 12px; }
+/* the rows folded under Advanced keep the editor's own columns, so their
+   fields start where the ones above do; a label longer than the column
+   wraps in it, as one above the fold does */
+.rt-gedit .rt-gadv .inner { grid-template-columns: var(--ed-lab, 72px) minmax(0, 1fr); }
+.rt-gedit .rt-gadv .inner label { white-space: normal; }
 /* the group being edited reads as selected among the others: a soft tint
    and an accent ring, as a list marks its selected row; its Save and
    Cancel stay at the bottom of the window while its rows scroll by, at a
@@ -722,6 +746,7 @@ body.window .rt-gedit > .bar { --vfoot: 8px; }
   body.web .rt-pick { flex-wrap: wrap; }
   body.web .rt-gedit { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 12px; }
   body.web .rt-gedit label { text-align: left; padding-top: 8px; }
+  body.web .rt-gedit .rt-gadv .inner { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   body.web .rt-gedit .segs { flex-wrap: wrap; }
   body.web .rt-gedit .fbrow { flex-wrap: wrap; justify-content: normal; }
   body.web .rt-gedit .fbrow .n { flex: 1 1 calc(100% - 60px); white-space: normal; overflow-wrap: anywhere; }
@@ -745,6 +770,7 @@ body.window .rt-gedit > .bar { --vfoot: 8px; }
 :where(.rt-gpage.max520) .rt-gsec .rt-gfilter { flex: 1 1 auto; width: auto; }
 :where(.rt-gpage.max520) .rt-gedit { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 :where(.rt-gpage.max520) .rt-gedit label { text-align: left; padding-top: 8px; }
+:where(.rt-gpage.max520) .rt-gedit .rt-gadv .inner { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 :where(.rt-gpage.max520) .rt-gedit .segs .opt { padding-left: 9px; padding-right: 9px; }
 /* the models and patterns take the column's width and no more: a grid's
    auto track grows to its widest row's content, so a long model name with
@@ -792,6 +818,9 @@ body.window .rt-gedit > .bar { --vfoot: 8px; }
 .rt-gedit .fbrow .rt-gacct { flex: 0 1 auto; min-width: 0; }
 .rt-gedit .fbrow .rt-gacct > span { overflow: hidden; text-overflow: ellipsis; }
 .rt-gedit > .rt-gacc[hidden] { display: none; }
+/* a group bound to gateway keys (Group.Keys): a long key name ellipsizes */
+.rt-gedit > .rt-gkeys[hidden] { display: none; }
+.rt-gkey { min-width: 0; }
 .rt-gadd {
   justify-self: start; display: inline-flex; align-items: center; gap: 6px;
   height: 28px; padding: 0 11px 0 9px; border-radius: 8px;
@@ -931,6 +960,17 @@ body.window .rt-gedit > .bar { --vfoot: 8px; }
 .rt-cond.tm { cursor: text; }
 .rt-cond.tm input.clock, .editor .rt-cond.tm input.clock[type="text"] { width: 5.5ch; text-align: center; }
 .rt-cond.tm.bad { border-style: solid; border-color: var(--amber, var(--muted)); }
+/* how a pill compares (aipha2025 on X): a word in the pill that opens the
+   app's menu, quiet until it is pointed at */
+.rt-aopw { display: contents; }
+.rt-op { display: inline-flex; align-items: center; height: 20px; padding: 0 4px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer; flex: none; white-space: nowrap; transition: background-color .15s ease; }
+@media (hover: hover) and (pointer: fine) { .rt-op:hover { background: var(--pill-hover, var(--pill)); } }
+.rt-op:focus-visible { outline: none; background: var(--pill-hover, var(--pill)); }
+.rt-cond.ef { cursor: default; }
+.rt-cond.ms { cursor: text; }
+.rt-cond.ms > span { flex: none; }
+.rt-cond.ms > input { min-width: 0; flex: 0 1 auto; }
+.rt-cond.ms.bad { border-style: solid; border-color: var(--amber, var(--muted)); }
 /* the time zone a rule's hours are in, when the server's clock is another */
 .rt-zone { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .rt-cond[hidden] { display: none; }

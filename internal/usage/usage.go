@@ -224,6 +224,10 @@ type Record struct {
 	// what ImageFilesSaved was saved on (matrix0487 on Discord). None in a
 	// row from before it was kept.
 	ImageFiles int `json:"image_files,omitempty"`
+	// Socket says the request went over the Responses WebSocket, its
+	// last try (provider.Socket, matrix0487 on Discord): UpBytes is then
+	// what the socket was sent, a delta on a kept socket.
+	Socket bool `json:"ws,omitempty"`
 	// Kind is what the agent made the call for when it isn't a turn of
 	// the conversation: a Codex subagent's (review, compact, guardian…)
 	Kind string `json:"kind,omitempty"`
@@ -256,6 +260,13 @@ type Record struct {
 	// has the request's attempts already, so it can pass the row over.
 	// Never persisted.
 	Watched bool `json:"-"`
+	// ClientIP is the address the request came to the gateway from, as the
+	// connection gave it (the gateway trusts no forwarding header, so behind
+	// a proxy it is the proxy's): a loopback address for this computer. It
+	// stays on this computer: sync (SharedCalls) and the gateway's
+	// /v1/magpie/usage/requests leave it out. "" for a row kept before it
+	// was recorded, a call a client reported, or magpie's own.
+	ClientIP string `json:"client_ip,omitempty"`
 	// Local is true only for verified loopback gateway requests. It is used
 	// for local-session deduplication, never persisted or exported.
 	Local bool `json:"-"`

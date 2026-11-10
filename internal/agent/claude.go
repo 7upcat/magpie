@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -19,6 +18,7 @@ import (
 	"github.com/yetone/magpie/internal/desktopdir"
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/settings"
 )
@@ -177,7 +177,7 @@ const claudeEffortEnv = "CLAUDE_CODE_EFFORT_LEVEL"
 // claudeNameRe finds the Claude model an id names, as Claude Code matches it
 // to its settings: claude-opus-5-5 in claude-opus-5-5[1m], in a dated id or
 // under a provider's prefix (anthropic/…).
-var claudeNameRe = regexp.MustCompile(`claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:[^0-9]|$)`)
+var claudeNameRe = lazyre.New(`claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:[^0-9]|$)`)
 
 // claudeName is the Claude model a model id names, "" for another vendor's,
 // an alias (opus) or none. A version written with a dot (claude-opus-4.6)
@@ -217,9 +217,10 @@ func claudeEffortsFor(model string) []string {
 
 // claudeTopEffort is the models the effortLevel at the top of the user's
 // settings.json applies to: Opus 5, Fable 5.1 and those before them. Opus
-// 5.5 and every Claude model after it (any Claude Code doesn't know) read
-// only modelSettings.<model>.effortLevel (2.1.251 on); another vendor's
-// reads the top one.
+// 5.5, Fable 5.2 and every Claude model after them (any Claude Code doesn't
+// know) read only modelSettings.<model>.effortLevel (2.1.251 on; 2.1.321's
+// list of models that read the top one ends at Fable 5.1 and Mythos 5.1);
+// another vendor's reads the top one.
 var claudeTopEffort = []string{
 	"claude-opus-4", "claude-sonnet-4", "claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5",
 	"claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7", "claude-opus-4-8",
@@ -303,8 +304,11 @@ const claudeCapsEnv = "CLAUDE_CODE_MODEL_CAPABILITIES"
 // Behind a gateway whose model doesn't answer, it classifies locally anyway
 // and names the gateway in a notice, "this session isn't eligible because
 // your requests go through 127.0.0.1:3425…" (1EFLOPS on X, Claude Code on
-// Codex). Anthropic's page on it says to set it to 0 for a gateway that
-// can't run the checks: magpie does while none of the models Claude Code
+// Codex), or, where Anthropic has turned its local classifier off (2.1.312
+// and later), asks for approval of each action the check would judge,
+// whichever the value (gateway/automode.go). Anthropic's page on it says
+// to set it to 0 for a gateway that can't run the checks: magpie does
+// while none of the models Claude Code
 // can reach through it is reviewed (claudeReviewed), and leaves it unset
 // while one is. One the user set is theirs.
 const claudeReviewEnv = "CLAUDE_CODE_AUTO_MODE_SERVER"

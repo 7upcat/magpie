@@ -58,8 +58,16 @@ type QuotaWindow struct {
 	// (SuperMagic's points, #3950). Used is then no reading (0); the GUI
 	// says the figure left, and routing knows the account by it and puts
 	// the one with the most left first among a provider's accounts in the
-	// same unit (Allowance.Left). nil when not told.
+	// same unit (Allowance.Left). nil when not told. On an account with a
+	// usage cap, Amount of Limit and Used are what the wallet spent in the
+	// cap's period instead (wallet_spend.go, #5770), for the cap to hold.
 	Balance *float64 `json:"balance,omitempty"`
+	// Spent is, on a wallet's window (Balance), how much of it magpie saw
+	// go since SpentSince, the first reading of the period a cap counts it
+	// over: the window's own until its reset, else the local day
+	// (wallet_spend.go). nil when not counted.
+	Spent      *float64   `json:"spent,omitempty"`
+	SpentSince *time.Time `json:"spentSince,omitempty"`
 	// Family is the model family a per-model window belongs to (Antigravity's
 	// "Gemini 3.1 Pro (High)" is Gemini's), for the GUI to show one figure a
 	// family, the tightest; each window is still here, and routing reads
@@ -83,7 +91,9 @@ type QuotaWindow struct {
 	// Credits is set on each window of a ChatGPT account that holds
 	// credits (has_credits with a balance left, or unlimited): using the
 	// window up doesn't stop it, the vendor spends the credits instead
-	// (codexGoesOnCredits). Routing reads it (Allowance.OnCredits); kept
+	// (codexGoesOnCredits); and on each of a Kimi Code key's while its
+	// booster holds money (kimiBooster). Routing reads it
+	// (Allowance.OnCredits); kept
 	// with the reading, so one shown from before still says it.
 	Credits bool `json:"credits,omitempty"`
 	// Capped is set, for the GUI only (WithCapped), on a window an
@@ -166,6 +176,10 @@ type SubscriptionQuota struct {
 	// BalanceTrend is the Balance over time, as magpie read it, and when
 	// it runs out at that pace (balance_history.go)
 	BalanceTrend *BalanceTrend `json:"balanceTrend,omitempty"`
+	// Estimate is set when the Balance is one the user typed less what
+	// magpie priced the key's calls at since (key_balance_own.go), not a
+	// vendor's reading
+	Estimate *BalanceEstimate `json:"estimate,omitempty"`
 	// SharedBalance is set on each key of a provider found to read one
 	// account's balance with others (balance_shared.go): the name of the
 	// first of them, whose card shows it once for all
@@ -234,6 +248,11 @@ type SubscriptionQuota struct {
 	// From is the remote magpie a card is that one's (remote_quotas.go),
 	// by its name here; "" for this computer's own.
 	From string `json:"from,omitempty"`
+	// Via is the magpies (catalog.Self) a card told another magpie
+	// passed through, the one that read it first, this one last
+	// (CachedCards): the receiver leaves out a card that comes back to
+	// it (catalog.Loops). Only between magpies; nil here.
+	Via []string `json:"via,omitempty"`
 	// LastServedAt is when the account, plan or key last answered a
 	// request through this computer's gateway, nil when it hasn't in the
 	// last 30 days (served.go); set by Quotas, never cached.
@@ -332,7 +351,7 @@ func SubscriptionUsage(ctx context.Context) []SubscriptionQuota {
 		}
 		readCtx, seq := quotaReading(bg)
 		asked := claudeAskGeneration.Load()
-		go func() {
+		goRead(func() {
 			out := fetchSubscriptionUsage(readCtx)
 			noteDailyCredits(out, time.Now())
 			noteCardHistory(out, time.Now())
@@ -347,7 +366,7 @@ func SubscriptionUsage(ctx context.Context) []SubscriptionQuota {
 			// has it finished, hook and all
 			toldUsage()
 			close(done)
-		}()
+		})
 	}
 	pending := c.pending
 	c.Unlock()

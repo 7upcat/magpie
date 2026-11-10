@@ -10,10 +10,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/yetone/magpie/internal/lazyre"
 	"github.com/yetone/magpie/internal/plugin"
 )
 
@@ -78,7 +78,7 @@ func pluginUsageLogins(pp plugin.Provider) []Login {
 }
 
 // signInGone is a plugin's usage saying the account's sign-in is gone.
-var signInGone = regexp.MustCompile(`(?i)sign-in has (expired|lapsed)|sign in again`)
+var signInGone = lazyre.New(`(?i)sign-in has (expired|lapsed)|sign in again`)
 
 // pluginLoginQuota is the allowance of one of a plugin provider's
 // accounts, l.Agent being "plugin:" and its id.
@@ -124,7 +124,8 @@ func pluginLoginQuota(ctx context.Context, l Login) SubscriptionQuota {
 		notePluginLapseSince(pp, key, http.StatusOK, began)
 	}
 	keepPluginPlan(pp, key, u.Plan)
-	return quotaOfPlugin(q, u)
+	// a wallet's spend counted, for a cap to hold it (#5770)
+	return withWalletSpend(quotaOfPlugin(q, u), l.User, time.Now())
 }
 
 // quotaOfPlugin fills q with what the plugin told.

@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/filememo"
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
 // Model is one entry the picker can offer.
@@ -120,7 +120,7 @@ type Model struct {
 	// ChatGPT account answers for (provider.Entry's).
 	AgentsV2 bool `json:",omitempty"`
 	// Draws is set on a vendor-listed model that makes images (gpt-image-1,
-	// a relay's flux): kept with the list for Settings → Images, never
+	// a relay's flux): kept with the list for Settings → Models → Images, never
 	// offered to agents as a model to talk to.
 	Draws bool `json:",omitempty"`
 	// Films is set on a model another magpie lists as one it makes videos
@@ -655,6 +655,9 @@ func loadGen() (map[string]mdProvider, int) {
 					// deepinfra/…, xiaomi/…) votes its levels once, not
 					// once a host.
 					vote := func(who, own, by string, x mdModel) {
+						if routerIDs[who] {
+							return
+						}
 						spelt[who]++
 						if x.Name != "" && x.Name != own && x.Name != who {
 							if named[who] == nil {
@@ -1334,6 +1337,18 @@ func Knows(id string) bool {
 	return ContextOf(id) > 0 || len(EffortsOf(id)) > 0 || Thinks(id)
 }
 
+// IsOneOf reports whether the model of this id is one of ids (bare,
+// lowercase), matched as ContextOf and EffortsOf match it: by the id, a
+// relay's rename (codex-gpt-6.1-sol, a tag in brackets), another spelling,
+// or the model the user said it is the same as (UserSame). It is how a
+// rule kept for some models by name reaches them on a relay that renames
+// them.
+func IsOneOf(id string, ids map[string]bool) bool {
+	load()
+	_, ok := lookup(id, ids)
+	return ok
+}
+
 // KnowsAsWritten is Knows without another spelling (normalFor): the
 // usage report sends a model's id only when models.dev knows it as
 // written, so an id a user typed that only folds into a known one
@@ -1595,7 +1610,7 @@ var relayPrefixes = []string{"claude-"}
 // a model another of them lists is (openai-, databricks-, doubao-, zai-):
 // the model after it is the same model, its window, levels and images
 // included.
-var channelPrefix = regexp.MustCompile(`^[a-z]{2,24}-`)
+var channelPrefix = lazyre.New(`^[a-z]{2,24}-`)
 
 // renamed is the model a relay renamed to b, when models.dev lists none
 // by b (found), and the window the rename names, if any: a window mark
@@ -1797,7 +1812,7 @@ func levelIndexOf(all map[string]mdProvider, at int, pid string) *levelIndex {
 // channel lists gemini-3.8-flash-high, claude-opus-5-5-high,
 // claude-opus-4-6-thinking and gpt-oss-120b-medium, and its xAI channel
 // grok-3-mini-fast. Its "(high)" form is found's.
-var variantSuffix = regexp.MustCompile(`(?i)-(minimal|low|medium|high|xhigh|max|thinking|fast)$`)
+var variantSuffix = lazyre.New(`(?i)-(minimal|low|medium|high|xhigh|max|thinking|fast)$`)
 
 // Unsuffixed is id with a proxy's level or speed word taken off
 // (variantSuffix), and whether it had one. It is for borrowing levels a
@@ -1909,6 +1924,17 @@ func mostGiven(by map[int]int) int {
 	}
 	return best
 }
+
+// routerIDs are ids that name a vendor's router, not a model: OpenRouter's
+// openrouter/auto, model-oracle-ai's auto, Kilo's kilo-auto/free and the
+// rest are each their own, and a plugin's "auto" (豆包工作 picks Doubao's
+// model) is none of them. Without a path they were taken for one model,
+// and every provider's "auto" was given that model's levels, images and
+// window: pi offered thinking levels and image input for 豆包工作's auto.
+// What a provider's own list says of its router (ListedBy) still holds.
+// Only ids no vendor gives a model are here: "fast" and "balanced" are
+// trustedrouter's and Kilo's routers, but a vendor may name a model so.
+var routerIDs = map[string]bool{"auto": true, "default": true, "free": true}
 
 // bareID is a model's id without the vendor's prefix, lowercase.
 func bareID(id string) string {
@@ -2225,9 +2251,13 @@ func CodexModelsCache() string { return filepath.Join(CodexHome(), "models_cache
 
 // Codex returns the models Codex itself lists, straight from the cache the
 // Codex CLI writes; there is no compiled-in list to fall back to.
-func Codex() []Model {
+func Codex() []Model { return slices.Clone(CodexShared()) }
+
+// CodexShared is Codex's list without a copy, for a caller that only
+// reads it: the effort field asks for it on every poll.
+func CodexShared() []Model {
 	out, _ := filememo.Read("codex models", CodexModelsCache(), parseCodex)
-	return slices.Clone(out)
+	return out
 }
 
 func parseCodex(b []byte) ([]Model, error) {

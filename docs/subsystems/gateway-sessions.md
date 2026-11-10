@@ -91,7 +91,18 @@ the gateway's `omp|<sub id>` is its own in the same places as Raft's `pi|`
 key, and is never a second session counted again (Jumy, Discord 10-30:
 `TestOmpSubagentsAreTheSessionsToTheGateway`,
 `TestOmpSubagentCountedOnceWithTheGateway`). A Claude Code session's
-copies (`Copies`) are among its keys the same way. A Claude Code
+copies (`Copies`) are among its keys the same way. A ZCode session stands
+for its bare id too: a request names it by the id its database gives with
+a prefix stripped (`sess_…`, a subagent's `sess_subagent_agent_…`:
+`zcodeBareID`), its own as well as its forks' and subagents' (their files
+are in its group, `Subs`, and `idInFile` reads their ids). Without it a
+ZCode session whose files are here was a row under its folder and again a
+row under Seen through the gateway, and its spend counted twice
+(flandern1211_58540 on Discord, #5754;
+`TestZCodeGatewayRowIsTheSessionItself`). `requestIDs` is the one place
+that says which ids a request names a session by: `GatewayKeys` (the
+list, its spend, the stats' native set, `viaOf`, the management
+page's search) and `NativeIDs` (its count and delete) both read it. A Claude Code
 session Claude Desktop's Code tab ran is in Claude Code's folder, and only its lines' `entrypoint`
 (`claude-desktop`, `claude-desktop-3p`) tells it apart: its parse keeps the
 entrypoint of the line its folder came from (`state.Entry`), and the
@@ -371,6 +382,15 @@ requests name one in a header (`sessionOf`: `X-Magpie-Session`, or the
 agent's own, `sessionHeaders`), under the agent its User-Agent names
 (`usage.AgentOf`, magpie's agents and plugins' agents; another client by
 its product name).
+The stats' `keys` name these sessions too (`MergeExternalStats`), since
+Usage › Sessions lists only the keys it is given (linkaww on Discord: a
+Docker magpie in gateway mode listed almost none;
+`TestGatewayStatsNameTheGatewaySessions`,
+`TestGatewayModeStatsNameTheGatewaySessions`). Usage › Context's Tuned for
+you is left out (`/api/tune` says `gateway: true`, and Use and Undo are
+refused): it replays this computer's agent files, so it said Claude Code
+made 0 requests (`TestTuneInGatewayModeIsLeftOut`,
+`context-tune-gateway.test.cjs`).
 The app's windows are never in gateway mode. Tests:
 `TestGatewayModeListsNoOwnSessions`, `gateway-mode-sessions.test.cjs`.
 
@@ -609,6 +629,15 @@ summary and gets the ledger filtered to its own `CallerKey`, with its filter
 lists cut to its own rows (`usageapi.OwnPage`): the ledger's facets are drawn
 from every call in the period, so without the cut they would name other keys.
 `TestUsageOverGateway` covers both, and a red when either cut is removed.
+Each gateway row keeps the address its request came from
+(`Record.ClientIP`, set in `appendUsage` from `peerAddr`: the connection's
+own, never a forwarding header). The window's `/api/usage/requests` has it
+for the Usage page's request detail; `/v1/magpie/usage/requests` takes it
+out for every caller (`withoutClientIPs`), and sync's `OwnDays` leaves it
+out, so it never leaves this computer. CSV export, OTel and middleware
+points name their columns and don't carry it. `rowText` packs it, or the
+ledger's cache reads it back empty
+(`TestUsageRowsKeepTheClientsAddress`, `TestClientIPKeptHereNotShared`).
 A held key is refused (`refuseHeld`, 403 `provider.KeyHeldCode`) the
 quotas, their history, kept cards and refresh, and `/v1/magpie/concurrency`
 (#1981); `/v1/magpie/route` tells it only routes whose `callerKey` is its
@@ -631,6 +660,28 @@ cards only, and a scope with no card answers the cards routes as held.
 `TestHeldKeyToldItsOwnQuotas` covers each route for a provider-wide key,
 a key with some of a provider's models, an account-held key, a provider's
 only key, and a key told nothing, each red when its check is removed.
+
+### Bandwidth
+
+Each gateway request's row keeps `UpBytes` (the bytes its tries put on the
+wire, `sentUp`) and `DownBytes` (the bytes read from the vendors' replies,
+counted per `Read` by `downCount`, so a stream is counted as it arrives and
+nothing is buffered). The same two places add to the gateway's running
+totals (`Server.Traffic`, atomic, in
+[`upbytes.go`](../../internal/gateway/upbytes.go)), so the totals and the rows
+count the same bytes once. Rows sum into `Totals` and into each chart
+point's `Part` (`add` from rows, `plus` from the request page's cells).
+The Requests chart's Traffic metric draws them per hour/day by model,
+provider or agent. `GET /api/usage/traffic` answers the totals with the
+requests in flight (`{}` when another magpie serves the gateway); the
+Requests card reads it a second apart while it is shown and says
+"↑ x/s · ↓ y/s" over the last ~3s while requests are in flight. Not counted:
+Claude bridge turns (no HTTP to the vendor), and a plugin's row counts the
+local hop to the plugin host. An upload is counted when its try is sent, so
+a large body shows as a burst. `TestTrafficCountsWhatRowsCount`,
+`TestTrafficCountsAStreamAsItFlows`, `TestSeriesPartsKeepBytes`,
+`TestUsageTrafficSaysWhatTheGatewayCounted` and `usage-traffic.test.cjs`
+cover it.
 
 ### Calls read from the agents' own files
 
@@ -731,6 +782,24 @@ Subagents (`parent_conversation_id`) and agy in WSL are not read.
 Verification: `TestAgySessions`, `TestAgyTitleLater`, `TestAgyGrows`,
 `TestAgyTranscript`, `TestAgyFolder`, `TestAgyRowOnly`, on conversations agy 1.3.5 and 1.4.7
 wrote in a sandbox.
+
+The Antigravity desktop app's stable and Insiders stores are read by
+[`antigravity_app.go`](../../internal/sessions/antigravity_app.go):
+`~/.gemini/antigravity/conversations/*.db` and
+`~/.gemini/antigravity-insiders/conversations/*.db`. Both use the existing
+`antigravity` session-reading choice and agent on Sessions and Usage;
+`Found` detects an Insiders-only install, and `Dirs` lists each existing
+store. Each conversation takes its title and workspace from the
+`conversation_summaries.db` beside its own store, including later title
+updates. Model calls reuse the app's read-only SQLite/protobuf reader,
+including response folding and gateway matching. Insiders session ids
+have an `insiders-` prefix in magpie, leaving stable ids unchanged and
+keeping equal UUIDs in the two stores from sharing a session or call id.
+The files themselves are not renamed. Sessions stay read-only with no
+terminal resume command; encrypted conversation text is not read.
+Verification: `TestAntigravityInsidersSessions` covers Insiders alone,
+both stores with the same UUID, per-model tokens, call ids, summary refresh
+and turning the existing reading choice off, using #2190's real step bytes.
 
 A read of every call decodes each file's cached shard, and over a long
 history that is tens of thousands of files (#2278: 68k shards, 415 MB).

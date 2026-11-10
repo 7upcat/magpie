@@ -55,6 +55,13 @@
     <a class="toc-only" href="/docs/ja/masking">プライバシーマスキング</a>
     <a class="toc-only" href="/docs/ja/mcp-router">MCP ルーター</a>
     <a class="toc-only" href="/docs/ja/library">ライブラリ</a>
+    <a class="toc-only" href="/docs/ja/claude-code-models">Claude Code で他のモデル</a>
+    <a class="toc-only" href="/docs/ja/codex-models">Codex で他のモデル</a>
+    <a class="toc-only" href="/docs/ja/gemini-cli-models">Gemini CLI で他のモデル</a>
+    <a class="toc-only" href="/docs/ja/subscriptions">サブスクを任意のエージェントで</a>
+    <a class="toc-only" href="/docs/ja/local-models">ローカルモデル</a>
+    <a class="toc-only" href="/docs/ja/opencode-models">OpenCode で他のモデル</a>
+    <a class="toc-only" href="/docs/ja/alternatives">CC Switch・CCR との比較</a>
     <a href="/docs/ja/import">magpie に追加</a>
     <a href="/docs/integrate">アプリ連携</a>
     <a href="https://github.com/yetone/magpie-releases/releases">リリース</a>
@@ -178,7 +185,7 @@
     <h3>1 つのモデルを複数のプロバイダで</h3>
     <p>グループとは、1 つまたは複数のプロバイダのモデルを、エージェントが 1 つとして選べるようにまとめたものです。ピッカーの <em>Routing groups</em> の下に <code>group/&lt;id&gt;</code> として表示されます。2 つのプロバイダが同じ名前で提供しているモデルは、それだけでグループになります。<span class="ui">Routing</span> タブの <span class="ui">New group</span> では、好きなモデルを組み合わせてグループを作れます。グループで何ができるかは、最初のモデルが基準になります。</p>
     <div class="callout"><b>何もしなくてもできるグループ。</b> すでに持っているモデルを提供する 2 つ目のプロバイダを追加すると（Claude サブスクリプションと Copilot の Claude Opus、DeepSeek 自身の API と OpenRouter の DeepSeek など）、magpie はそれを提供するすべてのプロバイダにまたがるグループ <code>auto/&lt;model&gt;</code>（モデル自身の ID。例: <code>auto/claude-opus-4.6</code>。以前の <code>group/auto-…</code> も引き続き使えます）を自動で作ります。名前はベンダーごとの表記の違い（<code>deepseek/deepseek-chat</code>、<code>deepseek-chat</code>）を吸収して照合されます。エージェントにこれを選ぶとリクエストがすべてに分散されます。不要なものは <code>magpie group rm</code> で非表示にできます。</div>
-    <div class="callout"><b>プロバイダ独自の id に自分の id を。</b> プロバイダによっては <code>deepseek-v4.1-flash-1017</code> や <code>grok-4.6@500k</code> のような独自の id でモデルを提供します。プロバイダの編集画面の <span class="ui">名前・価格・推論レベル</span> で、<span class="ui">同じモデル</span> の隣の <span class="ui">表示 ID</span> に使いたい id を入れて <span class="ui">保存</span>、または <code>magpie model id relay/grok-4.6@500k grok-4.6</code> を実行します。以後 magpie は一覧、ルーティング、他のプロバイダの <code>grok-4.6</code> とまとめた <code>auto/grok-4.6</code> グループ、ゲートウェイキーの制限、使用量の記録をすべて <code>grok-4.6</code> で行い、プロバイダには <code>grok-4.6@500k</code> で問い合わせます。1 つのプロバイダで 1 つの id は 1 つのモデルです。最後に付けたものが有効で、その間プロバイダ自身のその id のモデルは一覧から外れます。<code>magpie model id relay/grok-4.6 --reset</code> で元に戻し、<code>magpie model ids</code> で一覧を表示します。サインインしたサブスクリプションやプラグインのプロバイダでも同じです（<code>magpie model id cursor/deepseek-v41-flash-1017 deepseek-v4.1-flash</code>）。アカウントやプラグインには引き続き元の id で問い合わせます。</div>
+    <div class="callout"><b>プロバイダ独自の id に自分の id を。</b> プロバイダによっては <code>deepseek-v4.1-flash-1017</code> や <code>grok-4.6@500k</code> のような独自の id でモデルを提供します。プロバイダの編集画面の <span class="ui">モデル設定</span> で、<span class="ui">同じモデル</span> の隣の <span class="ui">表示 ID</span> に使いたい id を入れて <span class="ui">保存</span>、または <code>magpie model id relay/grok-4.6@500k grok-4.6</code> を実行します。以後 magpie は一覧、ルーティング、他のプロバイダの <code>grok-4.6</code> とまとめた <code>auto/grok-4.6</code> グループ、ゲートウェイキーの制限、使用量の記録をすべて <code>grok-4.6</code> で行い、プロバイダには <code>grok-4.6@500k</code> で問い合わせます。1 つのプロバイダで 1 つの id は 1 つのモデルです。最後に付けたものが有効で、その間プロバイダ自身のその id のモデルは一覧から外れます。<code>magpie model id relay/grok-4.6 --reset</code> で元に戻し、<code>magpie model ids</code> で一覧を表示します。サインインしたサブスクリプションやプラグインのプロバイダでも同じです（<code>magpie model id cursor/deepseek-v41-flash-1017 deepseek-v4.1-flash</code>）。アカウントやプラグインには引き続き元の id で問い合わせます。</div>
     <div class="table-wrap"><table>
       <tr><th>ルーティング</th><th>先に使われるもの</th></tr>
       <tr><td>スマート <code>smart</code></td><td>デフォルトです。メンバーのアカウントとキーをまとめて扱い（グループ内のグループは 1 つとして扱います。下記参照）、クォータに余裕のあるサブスクリプションのうち、利用枠が最も早く更新されるもの。基準は週の枠です。週の枠がなく 5 時間枠だけのアカウント（Claude Enterprise）は 5 時間枠で判断されるため、それより後に週の枠が更新されるものすべてより先になります。リセットのないクレジット（WorkBuddy のパッケージはそれぞれの日に失効します）は、残りのうち最も早く失効する時点で判断されるため、クレジットが最も早く失効する WorkBuddy アカウントが先になります。同時に更新されるアカウント（無料アカウントはすべて月末）は、その後に残りのクレジットが先に失効するものが先になります。失敗後に休止中のものは最後に回ります。</td></tr>
@@ -240,6 +247,7 @@ magpie group rule add opus-anywhere use=deepseek/deepseek-v4-flash compact  <spa
 magpie group rule add opus-anywhere use=kimi/kimi-k2.6 folders=~/oss,<span class="s">"~/My Project"</span>  <span class="c"># これらのプロジェクトのターンはまずこのモデルへ</span>
 magpie group rule add opus-anywhere pause=copilot/claude-opus-5.5 time=14:00-18:00 days=mon-fri  <span class="c"># その時間帯は外す</span>
 magpie group rule add opus-anywhere pause=claude/claude-opus-5-5 except-folders=~/big-task  <span class="c"># ~/big-task のタスク専用：ほかのフォルダでは外す</span>
+magpie group rule add opus-anywhere use=deepseek/deepseek-v4-flash when=<span class="s">"effort is off"</span> when=<span class="s">"not subagent"</span>  <span class="c"># 推論オフでサブエージェントでないリクエスト</span>
 magpie group set coder models+=group/opus-anywhere  <span class="c"># グループの中のグループ</span>
 magpie group rule opus-anywhere      <span class="c"># ルール一覧。rule rm|mv &lt;n&gt;、rule classifier &lt;group&gt; &lt;model&gt;</span>
 magpie group copy opus-anywhere <span class="s">"Opus test"</span>  <span class="c"># モデル・ルーティング・ルールが同じ複製。別々に変更できる</span>
@@ -293,7 +301,7 @@ magpie claude group/opus-anywhere    <span class="c"># これを使う</span></p
     <h3>エージェントの設定を手で編集すると、何か壊れますか？</h3>
     <p>いいえ。magpie は毎回ファイルを読み直し、自分が設定するキーだけに触れるので、他の設定やコメントはそのまま残ります。<span class="ui">Import…</span> で取り込んだプロバイダはコピーなので、その後エージェント側の設定を変えても再度コピーはされません。</p>
     <h3>GitHub に届かない環境で、インストールや更新をするには？</h3>
-    <p>インストーラと <code>magpie update</code> にプロキシを渡します：<code>curl -fsSL https://usemagpie.ai/install.sh | sh -s -- --proxy http://127.0.0.1:7890</code>、または <code>magpie update --proxy socks5://127.0.0.1:1080</code>（http・https・socks5・socks5h に対応。<code>HTTPS_PROXY</code> と <code>ALL_PROXY</code> も使われます）。<code>--mirror &lt;prefix&gt;</code> を付けると、指定した GitHub ダウンロードミラーから <code>&lt;prefix&gt;https://github.com/…</code> としてリリースファイルを取得します。<code>magpie update mirror &lt;prefix&gt;</code> でアプリ自身の更新を含め毎回使い、<code>magpie update mirror off</code> で解除します。指定しない限りミラーは使われず、ファイルの SHA-256 はミラーではなく常に usemagpie.ai から取得するので、ミラーが書き換えたファイルはインストールされません。アプリ自身の更新は <span class="ui">Settings</span> → <span class="ui">Proxy</span> を通ります。</p>
+    <p>インストーラと <code>magpie update</code> にプロキシを渡します：<code>curl -fsSL https://usemagpie.ai/install.sh | sh -s -- --proxy http://127.0.0.1:7890</code>、または <code>magpie update --proxy socks5://127.0.0.1:1080</code>（http・https・socks5・socks5h に対応。<code>HTTPS_PROXY</code> と <code>ALL_PROXY</code> も使われます）。リリースファイルは usemagpie.ai（Cloudflare R2）から取得し、失敗したときは github.com から取得します。<code>--mirror &lt;prefix&gt;</code> を付けると、サイトからの取得に失敗したとき、指定した GitHub ダウンロードミラーから <code>&lt;prefix&gt;https://github.com/…</code> としてリリースファイルを取得します。<code>magpie update mirror &lt;prefix&gt;</code> でアプリ自身の更新を含め毎回使い、<code>magpie update mirror off</code> で解除します。指定しない限りミラーは使われず、ファイルの SHA-256 はミラーではなく常に usemagpie.ai から取得するので、ミラーが書き換えたファイルはインストールされません。アプリ自身の更新は <span class="ui">Settings</span> → <span class="ui">Proxy</span> を通ります。</p>
 
     <h3 id="linux-build"><a class="anchor" href="#linux-build">Linux ではインストーラはどのビルドを入れますか？</a></h3>
     <p>GTK 3 と WebKitGTK 4.1 が入っていればデスクトップアプリ（ウィンドウ、トレイアイコン、アプリメニューの項目）です。デスクトップがあってもそれらが無いときは、パッケージマネージャー（apt、dnf、pacman、zypper）で <code>sudo</code> を通して WebKitGTK 4.1 を入れ（sudo がパスワードを尋ねます）、それからアプリを入れます。パスワードを尋ねる前に何を入れるかを表示します。端末が無いとき（CI、Dockerfile）、<code>sudo</code> が無いとき、知らないディストリビューションやインストールに失敗したときはターミナル版（<code>magpie tui</code>、<code>magpie web</code> と CLI）を入れ、最後に入れるコマンドを表示します。Debian・Ubuntu なら <code>sudo apt install libwebkit2gtk-4.1-0</code>、Fedora なら <code>sudo dnf install webkit2gtk4.1</code> です。入れたあとインストーラをもう一度実行するとアプリになります。デスクトップ上で実行しても ssh 越しでも、グラフィカルなセッション、あなたのグラフィカルなログイン、ログインできるデスクトップ環境のどれかがあればデスクトップありと判断します。デスクトップの無いサーバーにはターミナル版です。自分で選ぶには <code>--gui</code>（ライブラリを今入れられなくてもアプリ）か <code>--tui</code>（ターミナル版、パッケージは入れない）を付けます：<code>curl -fsSL https://usemagpie.ai/install.sh | sh -s -- --tui</code>。</p>
@@ -368,6 +376,13 @@ IP-CIDR6,::1/128,DIRECT,no-resolve</pre>
     <a href="/docs/ja/masking">プライバシーマスキング</a>
     <a href="/docs/ja/mcp-router">MCP ルーター</a>
     <a href="/docs/ja/library">ライブラリ</a>
+    <a href="/docs/ja/claude-code-models">Claude Code で他のモデル</a>
+    <a href="/docs/ja/codex-models">Codex で他のモデル</a>
+    <a href="/docs/ja/gemini-cli-models">Gemini CLI で他のモデル</a>
+    <a href="/docs/ja/subscriptions">サブスクを任意のエージェントで</a>
+    <a href="/docs/ja/local-models">ローカルモデル</a>
+    <a href="/docs/ja/opencode-models">OpenCode で他のモデル</a>
+    <a href="/docs/ja/alternatives">CC Switch・CCR との比較</a>
     <a href="/docs/ja/import">magpie に追加</a>
     <a href="/docs/integrate">アプリ連携</a>
     <a href="https://github.com/yetone/magpie">GitHub</a>

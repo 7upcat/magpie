@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -569,6 +570,8 @@ func Run(version string, showMain bool, link string) error {
 		// one has handed the gateway to the new version (#4938)
 		library.KeepLinked(backendCtx, 30*time.Second)
 	}()
+	// conversations read into memory, when switched on (Memory tab)
+	go keepDistilling(backendCtx)
 
 	// before the item is made, which starts as hidden as AppKit kept it
 	hiddenAtStart := bringTrayBack()
@@ -677,7 +680,11 @@ func Run(version string, showMain bool, link string) error {
 		h.whenReady(h.applyZoom)
 	}
 	if showMain {
-		h.whenReady(func() { h.ShowMain(argView(OpenView)) })
+		view := argView(OpenView)
+		if OpenUninstall {
+			view = uninstallView
+		}
+		h.whenReady(func() { h.ShowMain(view) })
 	} else if quiet && settings.Load().Dock {
 		// kept out of the Dock to start (Mac options above), it joins
 		// now without coming to the front
@@ -741,6 +748,8 @@ func singleInstance(h *host) *application.SingleInstanceOptions {
 			case len(args) == 1 && args[0] == "tray":
 			case len(args) == 1 && args[0] == "panel":
 				h.whenReady(func() { application.InvokeAsync(h.togglePanel) })
+			case slices.Equal(args, shortcut.UninstallArgs):
+				h.whenReady(func() { h.ShowMain(uninstallView) })
 			case len(args) == 2 && (args[0] == "gui" || args[0] == "app"):
 				h.whenReady(func() { h.ShowMain(argView(args[1])) })
 			default:
@@ -846,6 +855,14 @@ func panelOptions(goos, theme string) application.WebviewWindowOptions {
 // icon runs it (see omarchy.AddWidget).
 var OpenPanel bool
 
+// OpenUninstall opens the window on Settings › Uninstall magpie, asking
+// (Windows' Installed apps, shortcut.UninstallArgs).
+var OpenUninstall bool
+
+// uninstallView is Settings' About part with Uninstall magpie's question
+// open (uninstallMagpie in app.js).
+const uninstallView = "settings&tab=about&uninstall=1"
+
 // OpenView is the tab the window opens on, as `magpie gui settings` asks:
 // a restart to update comes back where it was asked for.
 var OpenView string
@@ -859,9 +876,14 @@ var Started func()
 // version leaving the menu bar, panel, window and Dock to it while it
 // finishes its requests: one bird. Hidden, the item's visibility is kept by
 // AppKit for the app, the new version's item and every later one too, so it
-// is forgotten once the hide is made.
+// is forgotten once the hide is made. Hiding forgets where the item sits
+// too ("NSStatusItem Preferred Position Item-0"), the place the new
+// version's item shares, so the item is renamed first, as on a quit
+// (keepTrayPlace): every update put the icon back at the default spot,
+// in Ice's hidden section (imty42 on X, #3873).
 func (h *host) leaveMenuBar() {
 	application.InvokeSync(func() {
+		keepTrayPlace()
 		h.tray.Hide()
 		forgetTrayHiddenLater()
 		hideWebview(h.panel)

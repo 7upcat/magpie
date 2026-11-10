@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/iconproxy"
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
 // The market is where the page finds MCP servers and skills to add in one
@@ -99,6 +99,7 @@ var featured = []MarketServer{
 	browserServer(),
 	searchServer(),
 	visionServer(),
+	memoryServer(),
 	remoteServer("context7", "Context7", "Upstash", gh("upstash"), "https://mcp.context7.com/mcp",
 		"Up-to-date documentation and code examples for any library, straight into the prompt.", false,
 		Input{Key: "CONTEXT7_API_KEY", Where: "header", Label: "API key", Description: "Optional — raises the rate limit. From context7.com/dashboard", Secret: true, format: "{}"}),
@@ -172,12 +173,12 @@ const magpieCommand = "magpie"
 const selfServerName = "magpie-image"
 
 // selfServer is magpie's own image generation server: generate_image makes
-// an image with the model Settings → Images → Image generation names, saved
+// an image with the model Settings → Models → Images → Image generation names, saved
 // in the project. It costs what the model does, so it is given only to the
 // agents picked for it.
 func selfServer() MarketServer {
 	m := localServer(selfServerName, "Magpie Image", "Magpie", "https://usemagpie.ai/favicon.png", "https://usemagpie.ai",
-		"Generate and edit images with the image model set in Magpie (Settings → Images), and make short videos with a video model set up in Magpie (Grok Imagine, Seedance), saved in the project.", magpieCommand, []string{"mcp", "image"})
+		"Generate and edit images with the image model set in Magpie (Settings → Models → Images), and make short videos with a video model set up in Magpie (Grok Imagine, Seedance), saved in the project.", magpieCommand, []string{"mcp", "image"})
 	m.OptIn = true
 	return m
 }
@@ -232,6 +233,21 @@ func visionServer() MarketServer {
 		"Read an image (a file, a URL, a screenshot) with the image recognition model set in Magpie (Settings → Models → Images), for a model that can't see.", magpieCommand, []string{"mcp", "vision"})
 	m.OptIn = true
 	return m
+}
+
+// memoryServerName is the name Magpie Memory's server is written under,
+// the name the gateway's own memory server goes by (ownMCP).
+const memoryServerName = "magpie-memory"
+
+// memoryServer is Magpie Memory: what is known about the user, kept by
+// magpie for every agent, as memory_search, memory_save and memory_forget,
+// through `magpie mcp memory`, which passes each call to the gateway's
+// MemoryMCPPath with the folder the agent started it in. It is there to be
+// shared and costs nothing, so, unlike magpie's other servers, it is given
+// to every agent that can take it.
+func memoryServer() MarketServer {
+	return localServer(memoryServerName, "Magpie Memory", "Magpie", "https://usemagpie.ai/favicon.png", "https://usemagpie.ai",
+		"Memory shared by every agent: your preferences, rules and what each project needs, kept in Magpie. Agents search it before asking again, and save what you ask them to remember.", magpieCommand, []string{"mcp", "memory"})
 }
 
 // selfCommand is the server's command and env for this magpie: its binary
@@ -394,7 +410,7 @@ func serverKey(s *Server) string {
 	if s.Remote() {
 		return strings.TrimSuffix(strings.ToLower(s.URL), "/")
 	}
-	if len(s.Args) == 2 && s.Args[0] == "mcp" && (s.Args[1] == "image" || s.Args[1] == "browser" || s.Args[1] == "search" || s.Args[1] == "vision") {
+	if len(s.Args) == 2 && s.Args[0] == "mcp" && (s.Args[1] == "image" || s.Args[1] == "browser" || s.Args[1] == "search" || s.Args[1] == "vision" || s.Args[1] == "memory") {
 		return "magpie mcp " + s.Args[1] // magpie's own, wherever its binary is
 	}
 	for _, a := range s.Args {
@@ -460,7 +476,7 @@ type registryVar struct {
 	IsSecret    bool   `json:"isSecret"`
 }
 
-var placeholderRe = regexp.MustCompile(`\{[^{}]*\}`)
+var placeholderRe = lazyre.New(`\{[^{}]*\}`)
 
 // listed is an active server the registry lists, as the market
 // offers it.
@@ -959,7 +975,7 @@ var skillsShURL = "https://www.skills.sh"
 //go:embed market_skills.json
 var skillsSnapshot []byte
 
-var repoRe = regexp.MustCompile(`^[\w.-]+/[\w.-]+$`)
+var repoRe = lazyre.New(`^[\w.-]+/[\w.-]+$`)
 
 var popular = struct {
 	sync.Mutex
@@ -1353,7 +1369,7 @@ func (e *SearchError) Unwrap() error { return e.Err }
 // variable for tests.
 var retryPause = time.Second
 
-var metaDescRe = regexp.MustCompile(`<meta\s+name="description"\s+content="([^"]*)"`)
+var metaDescRe = lazyre.New(`<meta\s+name="description"\s+content="([^"]*)"`)
 
 // metaDescription is what a page's <meta name="description"> says.
 func metaDescription(page []byte) string {

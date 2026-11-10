@@ -10,13 +10,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf16"
 
 	"github.com/yetone/magpie/internal/appdir"
+	"github.com/yetone/magpie/internal/lazyre"
 )
 
 // DeepSeek Harness (dsh) keeps a session in a folder of its own, under
@@ -50,7 +51,7 @@ func DshDir() string {
 }
 
 // session.jsonl, session.v3.jsonl.zstd, …
-var dshName = regexp.MustCompile(`^session(?:\.v(\d+))?\.jsonl(\.zstd)?$`)
+var dshName = lazyre.New(`^session(?:\.v(\d+))?\.jsonl(\.zstd)?$`)
 
 // dshHead is a session file's first line.
 type dshHead struct {
@@ -261,7 +262,13 @@ type dshEvent struct {
 	} `json:"data"`
 }
 
-var dshWanted = [][]byte{[]byte(`"user/message"`), []byte(`"session/title"`), []byte(`"session/title-llm-request"`), []byte(`"assistant/message"`), []byte(`"session/end-seed"`), []byte(`"tool/call"`)}
+// dshTurnKept is how many of a turn's newest user messages a session keeps
+// (TurnConvs), as many as the gateway reads off a request (dshLastConvs):
+// the one typed and the runtime context dsh sends after it, and a few more
+// for a file whose dsh writes no turn/start.
+const dshTurnKept = 4
+
+var dshWanted = [][]byte{[]byte(`"user/message"`), []byte(`"session/title"`), []byte(`"session/title-llm-request"`), []byte(`"assistant/message"`), []byte(`"session/end-seed"`), []byte(`"tool/call"`), []byte(`"turn/start"`)}
 
 // dshCarry is what a read of a dsh session file carries on with: where it
 // read to and the header it read first.
@@ -279,8 +286,8 @@ func parseDsh(f file, old *state) *state {
 	var s *state
 	var c dshCarry
 	var off, skip int64
-	if old != nil && old.Dsh != nil && old.Dsh.Tail.holds(f.path) {
-		s, c = old.clone(), *old.Dsh
+	if old != nil && old.more().Dsh != nil && old.more().Dsh.Tail.holds(f.path) {
+		s, c = old.clone(), *old.more().Dsh
 		off, skip = c.Tail.Off, c.Tail.Skip
 	} else {
 		s = &state{}
@@ -322,7 +329,7 @@ func parseDsh(f file, old *state) *state {
 	if err == nil {
 		c.Tail = markTail(f.path, next, nextSkip, end)
 	}
-	s.Dsh = &c
+	s.own().Dsh = &c
 	return s
 }
 
@@ -344,23 +351,41 @@ func dshCount(s *state, h *dshHead, b []byte, main bool) {
 	}
 	switch e.Type {
 	case "user/message":
-		if main && s.Title == "" && s.First == "" && e.Data.Source.Kind == "user" {
-			s.Convs = append(s.Convs, dshConvs(e.Data.Content)...)
+		if main && s.Title == "" && s.more().First == "" && e.Data.Source.Kind == "user" {
+			s.own().Convs = append(s.more().Convs, dshConvs(e.Data.Content)...)
 			if t := ccText(e.Data.Content); strings.HasPrefix(t, "<") {
-				s.First = untagged(t)
+				s.own().First = untagged(t)
 			} else {
 				s.Title = title(t)
 			}
 		}
+		if main {
+			// the messages of the turn under way, as its file has them
+			// before the request goes out: the newest of them are what a
+			// request still answering carried (TurnConvs, ownerLast). One
+			// spelling is enough, the gateway writes the request's that
+			// way (dshLastConvs); a file with no turn/start keeps its
+			// newest few
+			if c := dshConvs(e.Data.Content); len(c) > 0 {
+				s.own().TurnConvs = append(s.more().TurnConvs, c[0])
+				if n := len(s.more().TurnConvs); n > dshTurnKept {
+					s.own().TurnConvs = slices.Clone(s.more().TurnConvs[n-dshTurnKept:])
+				}
+			}
+		}
+	case "turn/start":
+		if main {
+			s.own().TurnConvs = nil
+		}
 	case "session/title":
 		if t := title(e.Data.Title); t != "" {
-			s.Named = t
+			s.own().Named = t
 		}
 	case "session/title-llm-request":
 		if main {
 			for _, m := range e.Data.Messages {
 				if m.Role == "user" {
-					s.Convs = append(s.Convs, dshConvs(m.Content)...)
+					s.own().Convs = append(s.more().Convs, dshConvs(m.Content)...)
 					break
 				}
 			}
@@ -372,8 +397,9 @@ func dshCount(s *state, h *dshHead, b []byte, main bool) {
 			// kept: dsh writes no parentSession for a fork, so the
 			// openings its seed carried are all that says the fork
 			// came from them (SeedConvs)
-			n := &state{ID: s.ID, Cwd: s.Cwd, Title: s.Title, First: s.First, Named: s.Named, Size: s.Size, Mod: s.Mod,
-				SeedConvs: append(append([]string(nil), s.SeedConvs...), s.Convs...)}
+			n := &state{ID: s.ID, Cwd: s.Cwd, Title: s.Title, Size: s.Size, Mod: s.Mod,
+				StateMore: moreOf(StateMore{First: s.more().First, Named: s.more().Named,
+					SeedConvs: append(append([]string(nil), s.more().SeedConvs...), s.more().Convs...)})}
 			n.saw(ms(h.CreatedAt), main)
 			*s = *n
 			return
@@ -385,7 +411,7 @@ func dshCount(s *state, h *dshHead, b []byte, main bool) {
 	if e.Type == "assistant/message" && main {
 		if src := e.Data.Message.Source; dshGatewayProvider(src) {
 			if id := src.ReplayState.Response.ResponseID; id != "" {
-				s.ResponseIDs = append(s.ResponseIDs, id)
+				s.own().ResponseIDs = append(s.more().ResponseIDs, id)
 			}
 		}
 	}
