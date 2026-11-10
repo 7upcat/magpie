@@ -156,7 +156,13 @@ func TestScriptFindsClaudeMoved(t *testing.T) {
 	fakeClaude(t, filepath.Join(home, "Applications"), out)
 	dir := filepath.Join(home, "iso-3p")
 	s := filepath.Join(home, "run.sh")
-	os.WriteFile(s, []byte(Script(filepath.Join(home, "Gone", "Claude.app"), "Claude", dir)), 0o755)
+	script := Script(filepath.Join(home, "Gone", "Claude.app"), "Claude", dir)
+	// Keep the system Applications fallback inside this test's home.
+	if !strings.Contains(script, " /Applications/Claude.app ") {
+		t.Fatal("system Applications fallback was not found in the script")
+	}
+	script = strings.Replace(script, " /Applications/Claude.app ", ` "$HOME/SystemApplications/Claude.app" `, 1)
+	os.WriteFile(s, []byte(script), 0o755)
 	if b, err := exec.Command(s).CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, b)
 	}
